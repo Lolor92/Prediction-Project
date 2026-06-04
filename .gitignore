@@ -1,0 +1,47 @@
+﻿# Unreal generated files
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+
+# Unreal binary assets and maps
+Content/
+*.uasset
+*.umap
+*.ubulk
+*.uexp
+*.utoc
+*.ucas
+
+# IDE and local workspace files
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.DotSettings.user
+
+# Generated solution/build outputs
+*.sln
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Plugin generated files
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+Plugins/**/Saved/
+
+# Local IDE plugin injected by Rider
+Plugins/Developer/
+
+# Logs and crash dumps
+*.log
+*.dmp
+*.tmp
+
+# Non-code plugin resources
+Plugins/**/Resources/
+.vsconfig
