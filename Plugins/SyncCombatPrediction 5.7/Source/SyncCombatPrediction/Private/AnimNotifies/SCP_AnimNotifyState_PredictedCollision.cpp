@@ -127,47 +127,8 @@ bool USCP_AnimNotifyState_PredictedCollision::BuildSampleTransforms(
 		RelativeLocation,
 		RelativeScale);
 
-	if (!bUseEndSocketSegment)
-	{
-		OutTransforms.Add(RelativeTransform * SourceTransform);
-		return true;
-	}
-
-	const bool bHasEndSocket =
-		!EndSocketName.IsNone() && MeshComp->DoesSocketExist(EndSocketName);
-	if (!bHasEndSocket)
-	{
-		OutTransforms.Add(RelativeTransform * SourceTransform);
-		return true;
-	}
-
-	const FTransform EndTransform = MeshComp->GetSocketTransform(EndSocketName, RTS_World);
-	const int32 SampleCount = FMath::Max(SegmentSamples, 1);
-	OutTransforms.Reserve(SampleCount);
-
-	for (int32 Index = 0; Index < SampleCount; ++Index)
-	{
-		const float Alpha = SampleCount == 1
-			? 0.f
-			: static_cast<float>(Index) / static_cast<float>(SampleCount - 1);
-
-		const FVector Location = FMath::Lerp(
-			SourceTransform.GetLocation(),
-			EndTransform.GetLocation(),
-			Alpha);
-		const FQuat Rotation = FQuat::Slerp(
-			SourceTransform.GetRotation(),
-			EndTransform.GetRotation(),
-			Alpha);
-		const FVector Scale = FMath::Lerp(
-			SourceTransform.GetScale3D(),
-			EndTransform.GetScale3D(),
-			Alpha);
-
-		OutTransforms.Add(RelativeTransform * FTransform(Rotation, Location, Scale));
-	}
-
-	return OutTransforms.Num() > 0;
+	OutTransforms.Add(RelativeTransform * SourceTransform);
+	return true;
 }
 
 FCollisionShape USCP_AnimNotifyState_PredictedCollision::MakeCollisionShape() const

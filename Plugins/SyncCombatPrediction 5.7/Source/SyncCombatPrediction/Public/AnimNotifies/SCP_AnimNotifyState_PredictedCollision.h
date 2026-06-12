@@ -96,23 +96,14 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Shape", meta=(EditCondition="CollisionShape==ESCP_CollisionShape::Capsule", EditConditionHides, ClampMin="0.1", UIMin="1.0", Units="cm"))
 	float CapsuleHalfHeight = 40.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Transform")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Shape")
 	FVector RelativeLocation = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Transform")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Shape")
 	FRotator RelativeRotation = FRotator::ZeroRotator;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Transform")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Shape")
 	FVector RelativeScale = FVector::OneVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Legacy Segment", meta=(InlineEditConditionToggle))
-	bool bUseEndSocketSegment = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Legacy Segment", meta=(EditCondition="bUseEndSocketSegment"))
-	FName EndSocketName = NAME_None;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Legacy Segment", meta=(EditCondition="bUseEndSocketSegment", ClampMin="1", UIMin="1", UIMax="12"))
-	int32 SegmentSamples = 3;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Collision")
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Pawn;
