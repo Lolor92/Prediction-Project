@@ -11,22 +11,6 @@
 #include "GameFramework/Controller.h"
 #include "Modules/ModuleManager.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogSyncAbilityMotionAbility, Log, All);
-
-namespace
-{
-float GetCurrentAbilityMontagePosition(const USyncAbilityMotionGameplayAbility* Ability)
-{
-	if (!Ability) return -1.f;
-
-	const UAnimMontage* Montage = Ability->GetCurrentMontage();
-	const ACharacter* Character = Cast<ACharacter>(Ability->GetAvatarActorFromActorInfo());
-	const USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
-	const UAnimInstance* AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
-	return Montage && AnimInstance ? AnimInstance->Montage_GetPosition(Montage) : -1.f;
-}
-}
-
 USyncAbilityMotionGameplayAbility::USyncAbilityMotionGameplayAbility()
 {
 	ReplicationPolicy = EGameplayAbilityReplicationPolicy::ReplicateNo;
@@ -50,17 +34,6 @@ void USyncAbilityMotionGameplayAbility::ActivateAbility(const FGameplayAbilitySp
 	InterruptOtherActiveAbilities();
 	RotateAvatarToControllerYawOnActivate();
 	OpenComboWindow();
-
-	const AActor* AvatarActor = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo();
-	UE_LOG(LogSyncAbilityMotionAbility, Display,
-		TEXT("AbilityActivate Ability=%s Avatar=%s Authority=%d Local=%d Seq=%u Montage=%s MontagePosition=%.3f"),
-		*GetNameSafe(this),
-		*GetNameSafe(AvatarActor),
-		ActorInfo && ActorInfo->IsNetAuthority(),
-		ActorInfo && ActorInfo->IsLocallyControlled(),
-		ActivationSequenceId,
-		*GetNameSafe(GetCurrentMontage()),
-		GetCurrentAbilityMontagePosition(this));
 }
 
 void USyncAbilityMotionGameplayAbility::EndAbility(const FGameplayAbilitySpecHandle Handle,
@@ -80,19 +53,6 @@ void USyncAbilityMotionGameplayAbility::EndAbility(const FGameplayAbilitySpecHan
 	}
 
 	ResetComboWindow();
-
-	const AActor* AvatarActor = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo();
-	UE_LOG(LogSyncAbilityMotionAbility, Display,
-		TEXT("AbilityEnd Ability=%s Avatar=%s Authority=%d Local=%d Seq=%u Cancelled=%d ReplicateEnd=%d Montage=%s MontagePosition=%.3f"),
-		*GetNameSafe(this),
-		*GetNameSafe(AvatarActor),
-		ActorInfo && ActorInfo->IsNetAuthority(),
-		ActorInfo && ActorInfo->IsLocallyControlled(),
-		ActivationSequenceId,
-		bWasCancelled,
-		bReplicateEndAbility,
-		*GetNameSafe(GetCurrentMontage()),
-		GetCurrentAbilityMontagePosition(this));
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

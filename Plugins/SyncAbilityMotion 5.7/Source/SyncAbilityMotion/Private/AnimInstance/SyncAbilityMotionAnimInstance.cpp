@@ -10,8 +10,6 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "Movement/SyncAbilityMotionCharacterMovementComponent.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogSyncAbilityMotionMontage, Log, All);
-
 void USyncAbilityMotionAnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();
@@ -118,16 +116,6 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 
 	if (!bHasAbilityContext || !Ability)
 	{
-		if (LastTrackedAbility || LastTrackedMontage)
-		{
-			UE_LOG(LogSyncAbilityMotionMontage, Display,
-				TEXT("MontageTrackClear Character=%s LastAbility=%s LastSeq=%u LastMontage=%s"),
-				*GetNameSafe(Character),
-				*GetNameSafe(LastTrackedAbility),
-				LastTrackedAbilityActivationSequenceId,
-				*GetNameSafe(LastTrackedMontage));
-		}
-
 		if (USyncAbilityMotionCharacterMovementComponent* SyncMoveComp =
 			Cast<USyncAbilityMotionCharacterMovementComponent>(CharacterMovementComponent))
 		{
@@ -153,17 +141,6 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 		LastTrackedAbilityActivationSequenceId = CurrentActivationSequenceId;
 		LastTrackedMontage = CurrentMontage;
 		bReleasedRootMotionThisMontage = false;
-
-		UE_LOG(LogSyncAbilityMotionMontage, Display,
-			TEXT("MontageTrackChange Character=%s Ability=%s Seq=%u Montage=%s Position=%.3f Percent=%.2f Local=%d Authority=%d"),
-			*GetNameSafe(Character),
-			*GetNameSafe(Ability),
-			CurrentActivationSequenceId,
-			*GetNameSafe(CurrentMontage),
-			CurrentMontage ? Montage_GetPosition(CurrentMontage) : -1.f,
-			Percent,
-			Character && Character->IsLocallyControlled(),
-			Character && Character->HasAuthority());
 
 		if (USyncAbilityMotionCharacterMovementComponent* SyncMoveComp =
 			Cast<USyncAbilityMotionCharacterMovementComponent>(CharacterMovementComponent))

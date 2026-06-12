@@ -283,33 +283,7 @@ void FSyncCombatHitWindowRuntime::RunHitDebugQuery(const FTransform& StartTransf
 
 			if (bAlreadyHit)
 			{
-				if (CombatComponent.GetOwner() && CombatComponent.GetOwner()->HasAuthority())
-				{
-					UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-						TEXT("HitWindowDuplicateSkippedV4 Source=%s Target=%s Step=%d/%d Depth=%d HitActors=%d ScopedHitActors=%d Scoped=%d"),
-						*GetNameSafe(CombatComponent.GetOwner()),
-						*GetNameSafe(HitActor),
-						StepIndex,
-						NumSubsteps,
-						ActiveHitDebugWindowDepth,
-						HitActorsThisWindow.Num(),
-						ScopedHitActorSet ? ScopedHitActorSet->Num() : 0,
-						bActiveScopedHitWindowKeyValid);
-				}
 				continue;
-			}
-
-			if (CombatComponent.GetOwner() && CombatComponent.GetOwner()->HasAuthority())
-			{
-				UE_LOG(LogPLCombatHitDetectionRuntime, Display,
-					TEXT("HitWindowHitAccepted Source=%s Target=%s Step=%d/%d Depth=%d HitActorsBefore=%d Impact=%s"),
-					*GetNameSafe(CombatComponent.GetOwner()),
-					*GetNameSafe(HitActor),
-					StepIndex,
-					NumSubsteps,
-					ActiveHitDebugWindowDepth,
-					HitActorsThisWindow.Num(),
-					*Hit.ImpactPoint.ToCompactString());
 			}
 
 			HitActorsThisWindow.Add(HitActorKey);
@@ -420,22 +394,6 @@ void FSyncCombatHitWindowRuntime::TryApplyHitGameplayEffects(AActor* HitActor, c
 	const bool bWillApplyCleanHitReactions = !bHasDefenseOutcome;
 	TMap<FGameplayTag, int32> PreviousReactionTagCounts;
 	CaptureReactionTagCounts(HitActor, PreviousReactionTagCounts);
-
-	UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-		TEXT("HitWindowResult Source=%s Target=%s Depth=%d HitActors=%d Blocked=%d Parried=%d Dodged=%d SuperArmor=%d TargetSuperArmorLevel=%d WillApplyDamage=%d WillApplyCleanHitReactions=%d ReactionEffects=[%s] DamageEffects=[%s]"),
-		*GetNameSafe(CombatComponent.GetOwner()),
-		*GetNameSafe(HitActor),
-		ActiveHitDebugWindowDepth,
-		HitActorsThisWindow.Num(),
-		bWasBlocked,
-		bWasParried,
-		bWasDodged,
-		bHasSuperArmor,
-		static_cast<int32>(TargetSuperArmorLevel),
-		bWillApplyDamage,
-		bWillApplyCleanHitReactions,
-		*SyncCombatHitWindowEffectListToString(ActiveHitWindowSettings.GameplayEffectsToApply),
-		*SyncCombatHitWindowEffectListToString(ActiveHitWindowSettings.DamageSettings.DamageGameplayEffectsToApply));
 
 	ApplyHitWindowTransformEffects(HitActor, bWasBlocked, bWasDodged, bHasSuperArmor);
 
@@ -565,29 +523,10 @@ void FSyncCombatHitWindowRuntime::ApplyHitWindowGameplayEffectListToTarget(
 			continue;
 		}
 
-		UE_LOG(LogPLCombatHitDetectionRuntime, Display,
-			TEXT("ApplyHitWindowGEStart Source=%s Target=%s Effect=%s Level=%.2f TargetTagsBefore=[%s] Depth=%d HitActors=%d"),
-			*GetNameSafe(CombatComponent.GetOwner()),
-			*GetNameSafe(HitActor),
-			*GetNameSafe(GameplayEffectToApply.GameplayEffectClass),
-			GameplayEffectToApply.EffectLevel,
-			*PLGetOwnedTagsString(TargetASC),
-			ActiveHitDebugWindowDepth,
-			HitActorsThisWindow.Num());
-
-		const FActiveGameplayEffectHandle AppliedHandle = CombatComponent.AbilitySystemComponent->ApplyGameplayEffectSpecToTarget(
+		CombatComponent.AbilitySystemComponent->ApplyGameplayEffectSpecToTarget(
 			*SpecHandle.Data.Get(),
 			TargetASC
 		);
-
-		UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-			TEXT("ApplyHitWindowGEEnd Source=%s Target=%s Effect=%s Level=%.2f AppliedHandleValid=%d TargetTagsAfter=[%s]"),
-			*GetNameSafe(CombatComponent.GetOwner()),
-			*GetNameSafe(HitActor),
-			*GetNameSafe(GameplayEffectToApply.GameplayEffectClass),
-			GameplayEffectToApply.EffectLevel,
-			AppliedHandle.IsValid(),
-			*PLGetOwnedTagsString(TargetASC));
 	}
 }
 
@@ -625,14 +564,6 @@ void FSyncCombatHitWindowRuntime::ScheduleDelayedHitWindowGameplayEffects(
 		}
 
 		const float DelaySeconds = FMath::Max(0.f, DelayedEffect.DelaySeconds);
-
-		UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-			TEXT("ScheduleDelayedHitWindowGE Source=%s Target=%s Effect=%s Level=%.2f Delay=%.3f"),
-			*GetNameSafe(SourceActor.Get()),
-			*GetNameSafe(TargetActor.Get()),
-			*GetNameSafe(DelayedEffect.GameplayEffectClass),
-			DelayedEffect.EffectLevel,
-			DelaySeconds);
 
 		FTimerDelegate TimerDelegate;
 		TimerDelegate.BindStatic(
@@ -704,27 +635,10 @@ void FSyncCombatHitWindowRuntime::ApplyDelayedGameplayEffectToTarget(
 		return;
 	}
 
-	UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-		TEXT("ApplyDelayedHitWindowGEStart Source=%s Target=%s Effect=%s Level=%.2f TargetTagsBefore=[%s]"),
-		*GetNameSafe(SourceActor.Get()),
-		*GetNameSafe(TargetActor.Get()),
-		*GetNameSafe(GameplayEffectClass),
-		EffectLevel,
-		*PLGetOwnedTagsString(TargetASC));
-
-	const FActiveGameplayEffectHandle AppliedHandle = SourceASC->ApplyGameplayEffectSpecToTarget(
+	SourceASC->ApplyGameplayEffectSpecToTarget(
 		*SpecHandle.Data.Get(),
 		TargetASC
 	);
-
-	UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-		TEXT("ApplyDelayedHitWindowGEEnd Source=%s Target=%s Effect=%s Level=%.2f AppliedHandleValid=%d TargetTagsAfter=[%s]"),
-		*GetNameSafe(SourceActor.Get()),
-		*GetNameSafe(TargetActor.Get()),
-		*GetNameSafe(GameplayEffectClass),
-		EffectLevel,
-		AppliedHandle.IsValid(),
-		*PLGetOwnedTagsString(TargetASC));
 }
 
 bool FSyncCombatHitWindowRuntime::ShouldApplyDamageGameplayEffects(
@@ -1341,26 +1255,7 @@ void FSyncCombatHitWindowRuntime::ApplyGameplayEffectToActor(AActor* RecipientAc
 
 	if (!SpecHandle.IsValid()) return;
 
-	UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-		TEXT("ApplyDefenseOrReactionGEStart Source=%s Recipient=%s Effect=%s Level=%.2f RecipientTagsBefore=[%s] Depth=%d HitActors=%d"),
-		*GetNameSafe(CombatComponent.GetOwner()),
-		*GetNameSafe(RecipientActor),
-		*GetNameSafe(GameplayEffectClass),
-		EffectLevel,
-		*PLGetOwnedTagsString(RecipientASC),
-		ActiveHitDebugWindowDepth,
-		HitActorsThisWindow.Num());
-
-	const FActiveGameplayEffectHandle AppliedHandle = RecipientASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
-
-	UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-		TEXT("ApplyDefenseOrReactionGEEnd Source=%s Recipient=%s Effect=%s Level=%.2f AppliedHandleValid=%d RecipientTagsAfter=[%s]"),
-		*GetNameSafe(CombatComponent.GetOwner()),
-		*GetNameSafe(RecipientActor),
-		*GetNameSafe(GameplayEffectClass),
-		EffectLevel,
-		AppliedHandle.IsValid(),
-		*PLGetOwnedTagsString(RecipientASC));
+	RecipientASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
 }
 
 void FSyncCombatHitWindowRuntime::ExecuteHitWindowGameplayCues(AActor* HitActor, const FHitResult* HitResult,
@@ -1533,28 +1428,6 @@ bool FSyncCombatHitWindowRuntime::BeginHitDetectionWindow(const UAnimNotifyState
 	++ActiveWindowCount;
 	++ActiveHitDebugWindowDepth;
 
-	if (OwnerActor->HasAuthority())
-	{
-		UE_LOG(LogPLCombatHitDetectionRuntime, Display,
-			TEXT("HitWindowBeginV4 Owner=%s Notify=%s Mesh=%s Animation=%s AnimationClass=%s NotifyDuration=%.3f ActiveMontage=%s MontagePosition=%.3f Socket=%s Scoped=%d Depth=%d NotifyCount=%d StartingFirst=%d ReactionEffects=[%s] DamageEffects=[%s] DelayedEffects=%d"),
-			*GetNameSafe(OwnerActor),
-			*GetNameSafe(NotifyState),
-			*GetNameSafe(MeshComp),
-			*GetNameSafe(Animation),
-			Animation ? *Animation->GetClass()->GetName() : TEXT("None"),
-			TotalDuration,
-			*GetNameSafe(ActiveMontage),
-			ActiveMontagePosition,
-			*TraceSocketName.ToString(),
-			bActiveScopedHitWindowKeyValid,
-			ActiveHitDebugWindowDepth,
-			ActiveWindowCount,
-			bStartingFirstActiveWindow,
-			*SyncCombatHitWindowEffectListToString(HitWindowSettings.GameplayEffectsToApply),
-			*SyncCombatHitWindowEffectListToString(HitWindowSettings.DamageSettings.DamageGameplayEffectsToApply),
-			HitWindowSettings.DelayedGameplayEffectsToApply.Num());
-	}
-
 	if (!TraceSocketName.IsNone() && !MeshComp->DoesSocketExist(TraceSocketName))
 	{
 		UE_LOG(LogPLCombatHitDetectionRuntime, Warning,
@@ -1607,15 +1480,10 @@ void FSyncCombatHitWindowRuntime::EndHitDetectionWindow(const UAnimNotifyState* 
 	}
 
 	const FObjectKey NotifyKey(NotifyState);
-	const int32 PreviousHitDebugWindowDepth = ActiveHitDebugWindowDepth;
-	int32 PreviousActiveWindowCount = 0;
-	int32 NewActiveWindowCount = 0;
 
 	if (int32* ActiveWindowCount = ActiveHitDetectionWindowCounts.Find(NotifyKey))
 	{
-		PreviousActiveWindowCount = *ActiveWindowCount;
 		*ActiveWindowCount = FMath::Max(0, *ActiveWindowCount - 1);
-		NewActiveWindowCount = *ActiveWindowCount;
 
 		if (*ActiveWindowCount == 0)
 		{
@@ -1629,28 +1497,6 @@ void FSyncCombatHitWindowRuntime::EndHitDetectionWindow(const UAnimNotifyState* 
 	}
 
 	ActiveHitDebugWindowDepth = FMath::Max(0, ActiveHitDebugWindowDepth - 1);
-
-	if (OwnerActor->HasAuthority())
-	{
-		const UAnimMontage* ActiveMontage = nullptr;
-		float ActiveMontagePosition = -1.f;
-		PLGetActiveMontageDebugData(MeshComp, ActiveMontage, ActiveMontagePosition);
-
-		UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
-			TEXT("HitWindowEndV3 Owner=%s Notify=%s Animation=%s AnimationClass=%s ActiveMontage=%s MontagePosition=%.3f DepthBefore=%d DepthAfter=%d NotifyCountBefore=%d NotifyCountAfter=%d HitActors=%d ResetHitWindow=%d"),
-			*GetNameSafe(OwnerActor),
-			*GetNameSafe(NotifyState),
-			*GetNameSafe(Animation),
-			Animation ? *Animation->GetClass()->GetName() : TEXT("None"),
-			*GetNameSafe(ActiveMontage),
-			ActiveMontagePosition,
-			PreviousHitDebugWindowDepth,
-			ActiveHitDebugWindowDepth,
-			PreviousActiveWindowCount,
-			NewActiveWindowCount,
-			HitActorsThisWindow.Num(),
-			ActiveHitDebugWindowDepth == 0);
-	}
 
 	if (ActiveHitDebugWindowDepth == 0)
 	{
