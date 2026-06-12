@@ -215,6 +215,7 @@ bool USCP_CombatPredictionComponent::ReportHitWithSettings(
 	{
 		OnAuthorityHit.Broadcast(Hit);
 		ApplyGameplayEffectsFromHit(Hit);
+		ApplyReactionDataTargetEffectsFromHit(Hit);
 
 		if (bAutoConfirmAuthorityReactions && ReactionData)
 		{
@@ -718,6 +719,51 @@ void USCP_CombatPredictionComponent::ApplyGameplayEffectsFromHit(
 			EffectContext,
 			&Hit.GameplayEffects);
 	}
+}
+
+void USCP_CombatPredictionComponent::ApplyReactionDataTargetEffectsFromHit(
+	const FSCP_PredictedHit& Hit)
+{
+	if (!Hit.bIsAuthority || !Hit.TargetActor || !Hit.InstigatorActor || !ReactionData)
+	{
+		return;
+	}
+
+	if (!ShouldApplyCleanHitReaction(
+		Hit.InstigatorActor,
+		Hit.TargetActor,
+		Hit.DefenseSettings))
+	{
+		return;
+	}
+
+	const FSCP_ReactionMontageEntry* Reaction = ReactionData->FindReaction(Hit.ReactionTag);
+	if (!Reaction || Reaction->TargetEffects.IsEmpty())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* SourceASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(Hit.InstigatorActor);
+	if (!SourceASC)
+	{
+		return;
+	}
+
+	const UGameplayAbility* AnimatingAbility = SourceASC->GetAnimatingAbility();
+	const float SourceLevel = AnimatingAbility ? AnimatingAbility->GetAbilityLevel() : 1.f;
+
+	FGameplayEffectContextHandle EffectContext = SourceASC->MakeEffectContext();
+	EffectContext.AddSourceObject(this);
+	EffectContext.AddInstigator(Hit.InstigatorActor, GetOwner());
+	EffectContext.AddHitResult(Hit.HitResult);
+	EffectContext.AddOrigin(Hit.HitResult.ImpactPoint);
+
+	ApplyEffectClassesToActor(
+		Hit.TargetActor,
+		Reaction->TargetEffects,
+		SourceLevel,
+		EffectContext);
 }
 
 void USCP_CombatPredictionComponent::ApplyEffectClassesToActor(

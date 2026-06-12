@@ -60,6 +60,9 @@ public:
 	virtual FString GetNotifyName_Implementation() const override;
 
 protected:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Socket")
+	FName SourceSocketName = TEXT("RightHandSocket");
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Reaction")
 	FGameplayTag ReactionTag;
 
@@ -72,14 +75,35 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Hit Transform", meta=(ShowOnlyInnerProperties))
 	FSCP_HitRotationSettings RotationSettings;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Defense", meta=(ShowOnlyInnerProperties))
-	FSCP_HitDefenseSettings DefenseSettings;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
+	bool bBlockable = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Damage", meta=(ShowOnlyInnerProperties))
-	FSCP_HitDamageDefenseSettings DamageDefenseSettings;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Defense",
+		meta=(EditCondition="bBlockable", EditConditionHides, ClampMin="0.0", ClampMax="180.0", Units="Degrees"))
+	float BlockAngleDegrees = 70.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Socket")
-	FName SourceSocketName = TEXT("RightHandSocket");
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Defense",
+		meta=(EditCondition="bBlockable", EditConditionHides))
+	bool bAllowMovementWhenBlocked = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Defense",
+		meta=(EditCondition="bBlockable", EditConditionHides))
+	bool bAllowRotationWhenBlocked = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
+	bool bDodgeable = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
+	ESCP_HitSuperArmorLevel RequiredSuperArmor = ESCP_HitSuperArmorLevel::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Damage")
+	bool bApplyDamageWhenBlocked = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Damage")
+	bool bApplyDamageWhenDodged = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Damage")
+	ESCP_HitSuperArmorLevel MaxSuperArmorLevelThatTakesDamage = ESCP_HitSuperArmorLevel::SuperArmor2;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Shape")
 	ESCP_CollisionShape CollisionShape = ESCP_CollisionShape::Box;

@@ -240,6 +240,7 @@ private:
 		const FSCP_HitTransformSettings& TransformSettings,
 		const FSCP_HitDefenseSettings& DefenseSettings);
 	void ApplyGameplayEffectsFromHit(const FSCP_PredictedHit& Hit);
+	void ApplyReactionDataTargetEffectsFromHit(const FSCP_PredictedHit& Hit);
 	void ApplyEffectClassesToActor(
 		AActor* TargetActor,
 		const TArray<TSubclassOf<UGameplayEffect>>& EffectClasses,

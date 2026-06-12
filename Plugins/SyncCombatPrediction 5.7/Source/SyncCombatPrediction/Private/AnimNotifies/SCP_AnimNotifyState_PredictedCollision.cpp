@@ -300,14 +300,27 @@ void USCP_AnimNotifyState_PredictedCollision::SweepCollisionWindow(
 				TransformSettings.MovementSettings = MovementSettings;
 				TransformSettings.RotationSettings = RotationSettings;
 
+				FSCP_HitDefenseSettings HitDefenseSettings;
+				HitDefenseSettings.BlockSettings.bBlockable = bBlockable;
+				HitDefenseSettings.BlockSettings.BlockAngleDegrees = BlockAngleDegrees;
+				HitDefenseSettings.BlockSettings.bAllowMovementWhenBlocked = bAllowMovementWhenBlocked;
+				HitDefenseSettings.BlockSettings.bAllowRotationWhenBlocked = bAllowRotationWhenBlocked;
+				HitDefenseSettings.DodgeSettings.bDodgeable = bDodgeable;
+				HitDefenseSettings.RequiredSuperArmor = RequiredSuperArmor;
+
+				FSCP_HitDamageDefenseSettings HitDamageDefenseSettings;
+				HitDamageDefenseSettings.bApplyDamageWhenBlocked = bApplyDamageWhenBlocked;
+				HitDamageDefenseSettings.bApplyDamageWhenDodged = bApplyDamageWhenDodged;
+				HitDamageDefenseSettings.MaxSuperArmorLevelThatTakesDamage = MaxSuperArmorLevelThatTakesDamage;
+
 				Window.PredictionComponent->ReportHitWithSettings(
 					Window.PredictionContext,
 					Hit,
 					ReactionTag,
 					GameplayEffects,
 					TransformSettings,
-					DefenseSettings,
-					DamageDefenseSettings);
+					HitDefenseSettings,
+					HitDamageDefenseSettings);
 			}
 
 			StepStartTransform = StepEndTransform;

@@ -4,19 +4,24 @@
 
 UAnimMontage* USCP_ReactionData::FindReactionMontage(FGameplayTag ReactionTag) const
 {
-	if (ReactionTag.IsValid())
+	const FSCP_ReactionMontageEntry* Reaction = FindReaction(ReactionTag);
+	return Reaction ? Reaction->Montage : nullptr;
+}
+
+const FSCP_ReactionMontageEntry* USCP_ReactionData::FindReaction(FGameplayTag ReactionTag) const
+{
+	if (!ReactionTag.IsValid())
 	{
-		for (const FSCP_ReactionMontageEntry& Entry : Reactions)
+		return nullptr;
+	}
+
+	for (const FSCP_ReactionMontageEntry& Entry : Reactions)
+	{
+		if (Entry.ReactionTag.IsValid() && ReactionTag.MatchesTag(Entry.ReactionTag))
 		{
-			if (Entry.ReactionTag.IsValid() &&
-				ReactionTag.MatchesTag(Entry.ReactionTag) &&
-				Entry.Montage)
-			{
-				return Entry.Montage;
-			}
+			return &Entry;
 		}
 	}
 
-	return DefaultReactionMontage;
+	return nullptr;
 }
-
