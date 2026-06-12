@@ -161,6 +161,25 @@ bool USCP_CombatPredictionComponent::ReportHitWithTransformSettings(
 	const FSCP_GameplayEffectSettings& GameplayEffects,
 	const FSCP_HitTransformSettings& TransformSettings)
 {
+	return ReportHitWithSettings(
+		Context,
+		HitResult,
+		ReactionTag,
+		GameplayEffects,
+		TransformSettings,
+		FSCP_HitDefenseSettings(),
+		FSCP_HitDamageDefenseSettings());
+}
+
+bool USCP_CombatPredictionComponent::ReportHitWithSettings(
+	const FSCP_CombatPredictionContext& Context,
+	const FHitResult& HitResult,
+	FGameplayTag ReactionTag,
+	const FSCP_GameplayEffectSettings& GameplayEffects,
+	const FSCP_HitTransformSettings& TransformSettings,
+	const FSCP_HitDefenseSettings& DefenseSettings,
+	const FSCP_HitDamageDefenseSettings& DamageDefenseSettings)
+{
 	AActor* TargetActor = HitResult.GetActor();
 	if (!MarkTargetProcessed(Context, TargetActor))
 	{
@@ -175,6 +194,8 @@ bool USCP_CombatPredictionComponent::ReportHitWithTransformSettings(
 	Hit.ReactionTag = ReactionTag;
 	Hit.GameplayEffects = GameplayEffects;
 	Hit.TransformSettings = TransformSettings;
+	Hit.DefenseSettings = DefenseSettings;
+	Hit.DamageDefenseSettings = DamageDefenseSettings;
 	Hit.bIsAuthority = Context.bIsAuthority;
 
 	if (bLogReportedHits)
@@ -199,7 +220,7 @@ bool USCP_CombatPredictionComponent::ReportHitWithTransformSettings(
 		{
 			if (UAnimMontage* ReactionMontage = ReactionData->FindReactionMontage(ReactionTag))
 			{
-				ConfirmTargetReaction(Context, TargetActor, ReactionMontage, TransformSettings);
+				ConfirmTargetReaction(Context, TargetActor, ReactionMontage, TransformSettings, DefenseSettings);
 			}
 		}
 	}
@@ -245,6 +266,28 @@ bool USCP_CombatPredictionComponent::PredictTargetReaction(
 		return false;
 	}
 
+	const bool bShouldApplyCleanReaction = ShouldApplyCleanHitReaction(
+		Hit.InstigatorActor,
+		Hit.TargetActor,
+		Hit.DefenseSettings);
+
+	ApplyHitTransformEffects(
+		Hit.InstigatorActor,
+		Hit.TargetActor,
+		Hit.TransformSettings,
+		Hit.DefenseSettings);
+
+	if (!bShouldApplyCleanReaction)
+	{
+		ServerConfirmTargetReactionWithSettings(
+			Hit.PredictionContext,
+			Hit.TargetActor,
+			ReactionMontage,
+			Hit.TransformSettings,
+			Hit.DefenseSettings);
+		return false;
+	}
+
 	AddPendingPredictedReaction(Hit.PredictionContext, Hit.TargetActor);
 	if (USCP_CombatPredictionComponent* TargetPredictionComponent =
 		Hit.TargetActor->FindComponentByClass<USCP_CombatPredictionComponent>())
@@ -256,18 +299,14 @@ bool USCP_CombatPredictionComponent::PredictTargetReaction(
 		TargetPredictionComponent->BeginPredictedTargetReaction(PredictedDuration);
 	}
 
-	ApplyHitTransformEffects(
-		Hit.InstigatorActor,
-		Hit.TargetActor,
-		Hit.TransformSettings);
-
 	const bool bPlayed = PlayReactionMontageOnActor(Hit.TargetActor, ReactionMontage, 0.f, true);
 
-	ServerConfirmTargetReactionWithTransform(
+	ServerConfirmTargetReactionWithSettings(
 		Hit.PredictionContext,
 		Hit.TargetActor,
 		ReactionMontage,
-		Hit.TransformSettings);
+		Hit.TransformSettings,
+		Hit.DefenseSettings);
 
 	return bPlayed;
 }
@@ -281,7 +320,8 @@ void USCP_CombatPredictionComponent::ServerConfirmTargetReaction_Implementation(
 		Context,
 		TargetActor,
 		ReactionMontage,
-		FSCP_HitTransformSettings());
+		FSCP_HitTransformSettings(),
+		FSCP_HitDefenseSettings());
 }
 
 void USCP_CombatPredictionComponent::ServerConfirmTargetReactionWithTransform_Implementation(
@@ -290,14 +330,30 @@ void USCP_CombatPredictionComponent::ServerConfirmTargetReactionWithTransform_Im
 	UAnimMontage* ReactionMontage,
 	FSCP_HitTransformSettings TransformSettings)
 {
-	ConfirmTargetReaction(Context, TargetActor, ReactionMontage, TransformSettings);
+	ConfirmTargetReaction(
+		Context,
+		TargetActor,
+		ReactionMontage,
+		TransformSettings,
+		FSCP_HitDefenseSettings());
+}
+
+void USCP_CombatPredictionComponent::ServerConfirmTargetReactionWithSettings_Implementation(
+	FSCP_CombatPredictionContext Context,
+	AActor* TargetActor,
+	UAnimMontage* ReactionMontage,
+	FSCP_HitTransformSettings TransformSettings,
+	FSCP_HitDefenseSettings DefenseSettings)
+{
+	ConfirmTargetReaction(Context, TargetActor, ReactionMontage, TransformSettings, DefenseSettings);
 }
 
 void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 	FSCP_CombatPredictionContext Context,
 	AActor* TargetActor,
 	UAnimMontage* ReactionMontage,
-	const FSCP_HitTransformSettings& TransformSettings)
+	const FSCP_HitTransformSettings& TransformSettings,
+	const FSCP_HitDefenseSettings& DefenseSettings)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority() || !TargetActor || !ReactionMontage)
 	{
@@ -307,8 +363,12 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 	Context.bIsAuthority = true;
 	Context.bIsLocallyControlled = false;
 
-	ApplyHitTransformEffects(GetOwner(), TargetActor, TransformSettings);
-	PlayReactionMontageOnActor(TargetActor, ReactionMontage, 0.f, true);
+	ApplyHitTransformEffects(GetOwner(), TargetActor, TransformSettings, DefenseSettings);
+	const bool bShouldApplyCleanReaction = ShouldApplyCleanHitReaction(GetOwner(), TargetActor, DefenseSettings);
+	if (bShouldApplyCleanReaction)
+	{
+		PlayReactionMontageOnActor(TargetActor, ReactionMontage, 0.f, true);
+	}
 
 	if (USCP_CombatPredictionComponent* TargetPredictionComponent =
 		TargetActor->FindComponentByClass<USCP_CombatPredictionComponent>())
@@ -321,8 +381,9 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 		TargetPredictionComponent->BeginTargetReactionMovementTolerance(ToleranceDuration);
 		TargetPredictionComponent->ClientPlayOwnerTargetReactionWithTransform(
 			GetOwner(),
-			ReactionMontage,
-			TransformSettings);
+			bShouldApplyCleanReaction ? ReactionMontage : nullptr,
+			TransformSettings,
+			DefenseSettings);
 	}
 
 	const UWorld* World = GetWorld();
@@ -333,9 +394,10 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 		Context,
 		GetOwner(),
 		TargetActor,
-		ReactionMontage,
+		bShouldApplyCleanReaction ? ReactionMontage : nullptr,
 		ServerStartTime,
-		TransformSettings);
+		TransformSettings,
+		DefenseSettings);
 }
 
 void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReaction_Implementation(
@@ -350,7 +412,8 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReaction_Implem
 		TargetActor,
 		ReactionMontage,
 		ServerStartTime,
-		FSCP_HitTransformSettings());
+		FSCP_HitTransformSettings(),
+		FSCP_HitDefenseSettings());
 }
 
 void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTransform_Implementation(
@@ -359,9 +422,10 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTra
 	AActor* TargetActor,
 	UAnimMontage* ReactionMontage,
 	float ServerStartTime,
-	FSCP_HitTransformSettings TransformSettings)
+	FSCP_HitTransformSettings TransformSettings,
+	FSCP_HitDefenseSettings DefenseSettings)
 {
-	if (!TargetActor || !ReactionMontage)
+	if (!TargetActor)
 	{
 		return;
 	}
@@ -382,16 +446,20 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTra
 		return;
 	}
 
-	const UWorld* World = GetWorld();
-	const AGameStateBase* GameState = World ? World->GetGameState() : nullptr;
-	const float CurrentServerTime = GameState ? GameState->GetServerWorldTimeSeconds() : ServerStartTime;
-	const float StartPosition = FMath::Clamp(
-		CurrentServerTime - ServerStartTime,
-		0.f,
-		ReactionMontage->GetPlayLength());
+	ApplyHitTransformEffects(InstigatorActor, TargetActor, TransformSettings, DefenseSettings);
 
-	ApplyHitTransformEffects(InstigatorActor, TargetActor, TransformSettings);
-	PlayReactionMontageOnActor(TargetActor, ReactionMontage, StartPosition, false);
+	if (ReactionMontage)
+	{
+		const UWorld* World = GetWorld();
+		const AGameStateBase* GameState = World ? World->GetGameState() : nullptr;
+		const float CurrentServerTime = GameState ? GameState->GetServerWorldTimeSeconds() : ServerStartTime;
+		const float StartPosition = FMath::Clamp(
+			CurrentServerTime - ServerStartTime,
+			0.f,
+			ReactionMontage->GetPlayLength());
+
+		PlayReactionMontageOnActor(TargetActor, ReactionMontage, StartPosition, false);
+	}
 }
 
 void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReaction_Implementation(
@@ -400,21 +468,26 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReaction_Implementatio
 	ClientPlayOwnerTargetReactionWithTransform_Implementation(
 		nullptr,
 		ReactionMontage,
-		FSCP_HitTransformSettings());
+		FSCP_HitTransformSettings(),
+		FSCP_HitDefenseSettings());
 }
 
 void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_Implementation(
 	AActor* InstigatorActor,
 	UAnimMontage* ReactionMontage,
-	FSCP_HitTransformSettings TransformSettings)
+	FSCP_HitTransformSettings TransformSettings,
+	FSCP_HitDefenseSettings DefenseSettings)
 {
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
 		return;
 	}
 
-	ApplyHitTransformEffects(InstigatorActor, GetOwner(), TransformSettings);
-	PlayReactionMontageOnActor(GetOwner(), ReactionMontage, 0.f, true);
+	ApplyHitTransformEffects(InstigatorActor, GetOwner(), TransformSettings, DefenseSettings);
+	if (ReactionMontage)
+	{
+		PlayReactionMontageOnActor(GetOwner(), ReactionMontage, 0.f, true);
+	}
 }
 
 int32 USCP_CombatPredictionComponent::AllocatePredictionEventId()
@@ -619,18 +692,32 @@ void USCP_CombatPredictionComponent::ApplyGameplayEffectsFromHit(
 		SourceLevel,
 		EffectContext);
 
-	ApplyEffectClassesToActor(
+	const bool bShouldApplyCleanReaction = ShouldApplyCleanHitReaction(
+		Hit.InstigatorActor,
 		Hit.TargetActor,
-		Hit.GameplayEffects.TargetEffects,
-		SourceLevel,
-		EffectContext);
+		Hit.DefenseSettings);
+	if (bShouldApplyCleanReaction)
+	{
+		ApplyEffectClassesToActor(
+			Hit.TargetActor,
+			Hit.GameplayEffects.TargetEffects,
+			SourceLevel,
+			EffectContext);
+	}
 
-	ApplyEffectClassesToActor(
+	if (ShouldApplyDamageEffects(
+		Hit.InstigatorActor,
 		Hit.TargetActor,
-		Hit.GameplayEffects.DamageEffects,
-		SourceLevel,
-		EffectContext,
-		&Hit.GameplayEffects);
+		Hit.DefenseSettings,
+		Hit.DamageDefenseSettings))
+	{
+		ApplyEffectClassesToActor(
+			Hit.TargetActor,
+			Hit.GameplayEffects.DamageEffects,
+			SourceLevel,
+			EffectContext,
+			&Hit.GameplayEffects);
+	}
 }
 
 void USCP_CombatPredictionComponent::ApplyEffectClassesToActor(
@@ -703,21 +790,23 @@ void USCP_CombatPredictionComponent::ApplyEffectClassesToActor(
 void USCP_CombatPredictionComponent::ApplyHitTransformEffects(
 	AActor* InstigatorActor,
 	AActor* TargetActor,
-	const FSCP_HitTransformSettings& TransformSettings) const
+	const FSCP_HitTransformSettings& TransformSettings,
+	const FSCP_HitDefenseSettings& DefenseSettings) const
 {
 	if (!InstigatorActor || !TargetActor)
 	{
 		return;
 	}
 
-	ApplyHitRotation(InstigatorActor, TargetActor, TransformSettings.RotationSettings);
-	ApplyHitMovement(InstigatorActor, TargetActor, TransformSettings.MovementSettings);
+	ApplyHitRotation(InstigatorActor, TargetActor, TransformSettings.RotationSettings, DefenseSettings);
+	ApplyHitMovement(InstigatorActor, TargetActor, TransformSettings.MovementSettings, DefenseSettings);
 }
 
 void USCP_CombatPredictionComponent::ApplyHitMovement(
 	AActor* InstigatorActor,
 	AActor* TargetActor,
-	const FSCP_HitMovementSettings& MovementSettings) const
+	const FSCP_HitMovementSettings& MovementSettings,
+	const FSCP_HitDefenseSettings& DefenseSettings) const
 {
 	if (MovementSettings.MoveDirection == ESCP_HitMoveDirection::None)
 	{
@@ -731,6 +820,17 @@ void USCP_CombatPredictionComponent::ApplyHitMovement(
 	}
 
 	if (!DoesTransformTimingMatch(MovementSettings.TriggerTiming, ESCP_HitTransformTriggerTiming::OnHit))
+	{
+		return;
+	}
+
+	const bool bWasBlocked = IsAttackBlocked(InstigatorActor, TargetActor, DefenseSettings);
+	if (IsAttackDodged(TargetActor, DefenseSettings) || HasRequiredSuperArmor(TargetActor, DefenseSettings))
+	{
+		return;
+	}
+
+	if (bWasBlocked && !DefenseSettings.BlockSettings.bAllowMovementWhenBlocked)
 	{
 		return;
 	}
@@ -780,7 +880,8 @@ void USCP_CombatPredictionComponent::ApplyHitMovement(
 void USCP_CombatPredictionComponent::ApplyHitRotation(
 	AActor* InstigatorActor,
 	AActor* TargetActor,
-	const FSCP_HitRotationSettings& RotationSettings) const
+	const FSCP_HitRotationSettings& RotationSettings,
+	const FSCP_HitDefenseSettings& DefenseSettings) const
 {
 	if (RotationSettings.RotationDirection == ESCP_HitRotationDirection::None)
 	{
@@ -788,6 +889,17 @@ void USCP_CombatPredictionComponent::ApplyHitRotation(
 	}
 
 	if (!DoesTransformTimingMatch(RotationSettings.TriggerTiming, ESCP_HitTransformTriggerTiming::OnHit))
+	{
+		return;
+	}
+
+	const bool bWasBlocked = IsAttackBlocked(InstigatorActor, TargetActor, DefenseSettings);
+	if (IsAttackDodged(TargetActor, DefenseSettings) || HasRequiredSuperArmor(TargetActor, DefenseSettings))
+	{
+		return;
+	}
+
+	if (bWasBlocked && !DefenseSettings.BlockSettings.bAllowRotationWhenBlocked)
 	{
 		return;
 	}
@@ -1053,6 +1165,148 @@ AActor* USCP_CombatPredictionComponent::ResolveTransformReferenceActor(
 	default:
 		return nullptr;
 	}
+}
+
+bool USCP_CombatPredictionComponent::IsAttackBlocked(
+	AActor* InstigatorActor,
+	AActor* TargetActor,
+	const FSCP_HitDefenseSettings& DefenseSettings) const
+{
+	if (!DefenseSettings.BlockSettings.bBlockable || !InstigatorActor || !TargetActor)
+	{
+		return false;
+	}
+
+	if (!BlockingTag.IsValid())
+	{
+		return false;
+	}
+
+	const UAbilitySystemComponent* TargetASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(TargetActor);
+	if (!TargetASC || !TargetASC->HasMatchingGameplayTag(BlockingTag))
+	{
+		return false;
+	}
+
+	return IsWithinBlockAngle(
+		TargetActor,
+		InstigatorActor,
+		DefenseSettings.BlockSettings.BlockAngleDegrees);
+}
+
+bool USCP_CombatPredictionComponent::IsAttackDodged(
+	AActor* TargetActor,
+	const FSCP_HitDefenseSettings& DefenseSettings) const
+{
+	if (!DefenseSettings.DodgeSettings.bDodgeable || !TargetActor)
+	{
+		return false;
+	}
+
+	if (!DodgingTag.IsValid())
+	{
+		return false;
+	}
+
+	const UAbilitySystemComponent* TargetASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(TargetActor);
+	return TargetASC && TargetASC->HasMatchingGameplayTag(DodgingTag);
+}
+
+bool USCP_CombatPredictionComponent::HasRequiredSuperArmor(
+	AActor* TargetActor,
+	const FSCP_HitDefenseSettings& DefenseSettings) const
+{
+	if (!TargetActor || DefenseSettings.RequiredSuperArmor == ESCP_HitSuperArmorLevel::None)
+	{
+		return false;
+	}
+
+	return GetTargetSuperArmorLevel(TargetActor) >= DefenseSettings.RequiredSuperArmor;
+}
+
+ESCP_HitSuperArmorLevel USCP_CombatPredictionComponent::GetTargetSuperArmorLevel(AActor* TargetActor) const
+{
+	const UAbilitySystemComponent* TargetASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(TargetActor);
+	if (!TargetASC)
+	{
+		return ESCP_HitSuperArmorLevel::None;
+	}
+
+	if (SuperArmorTag3.IsValid() && TargetASC->HasMatchingGameplayTag(SuperArmorTag3))
+	{
+		return ESCP_HitSuperArmorLevel::SuperArmor3;
+	}
+
+	if (SuperArmorTag2.IsValid() && TargetASC->HasMatchingGameplayTag(SuperArmorTag2))
+	{
+		return ESCP_HitSuperArmorLevel::SuperArmor2;
+	}
+
+	if (SuperArmorTag1.IsValid() && TargetASC->HasMatchingGameplayTag(SuperArmorTag1))
+	{
+		return ESCP_HitSuperArmorLevel::SuperArmor1;
+	}
+
+	return ESCP_HitSuperArmorLevel::None;
+}
+
+bool USCP_CombatPredictionComponent::ShouldApplyCleanHitReaction(
+	AActor* InstigatorActor,
+	AActor* TargetActor,
+	const FSCP_HitDefenseSettings& DefenseSettings) const
+{
+	return !IsAttackBlocked(InstigatorActor, TargetActor, DefenseSettings)
+		&& !IsAttackDodged(TargetActor, DefenseSettings)
+		&& !HasRequiredSuperArmor(TargetActor, DefenseSettings);
+}
+
+bool USCP_CombatPredictionComponent::ShouldApplyDamageEffects(
+	AActor* InstigatorActor,
+	AActor* TargetActor,
+	const FSCP_HitDefenseSettings& DefenseSettings,
+	const FSCP_HitDamageDefenseSettings& DamageDefenseSettings) const
+{
+	const bool bWasBlocked = IsAttackBlocked(InstigatorActor, TargetActor, DefenseSettings);
+	const bool bWasDodged = IsAttackDodged(TargetActor, DefenseSettings);
+	const ESCP_HitSuperArmorLevel TargetSuperArmorLevel = GetTargetSuperArmorLevel(TargetActor);
+
+	if (bWasBlocked && !DamageDefenseSettings.bApplyDamageWhenBlocked)
+	{
+		return false;
+	}
+
+	if (bWasDodged && !DamageDefenseSettings.bApplyDamageWhenDodged)
+	{
+		return false;
+	}
+
+	if (TargetSuperArmorLevel > DamageDefenseSettings.MaxSuperArmorLevelThatTakesDamage)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool USCP_CombatPredictionComponent::IsWithinBlockAngle(
+	const AActor* DefenderActor,
+	const AActor* AttackerActor,
+	float BlockAngleDegrees)
+{
+	if (!DefenderActor || !AttackerActor)
+	{
+		return false;
+	}
+
+	const FVector ToAttacker =
+		(AttackerActor->GetActorLocation() - DefenderActor->GetActorLocation()).GetSafeNormal();
+	const FVector DefenderForward = DefenderActor->GetActorForwardVector().GetSafeNormal();
+	const float Dot = FVector::DotProduct(DefenderForward, ToAttacker);
+	const float AngleDegrees = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f)));
+	return AngleDegrees < BlockAngleDegrees;
 }
 
 void USCP_CombatPredictionComponent::BeginPredictedTargetReaction(float Duration)

@@ -198,6 +198,75 @@ struct SYNCCOMBATPREDICTION_API FSCP_HitTransformSettings
 	FSCP_HitRotationSettings RotationSettings;
 };
 
+UENUM(BlueprintType)
+enum class ESCP_HitSuperArmorLevel : uint8
+{
+	None UMETA(DisplayName="None"),
+	SuperArmor1 UMETA(DisplayName="Super Armor 1"),
+	SuperArmor2 UMETA(DisplayName="Super Armor 2"),
+	SuperArmor3 UMETA(DisplayName="Super Armor 3")
+};
+
+USTRUCT(BlueprintType)
+struct SYNCCOMBATPREDICTION_API FSCP_HitBlockSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Block")
+	bool bBlockable = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Block",
+		meta=(EditCondition="bBlockable", EditConditionHides, ClampMin="0.0", ClampMax="180.0", Units="Degrees"))
+	float BlockAngleDegrees = 70.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Block",
+		meta=(EditCondition="bBlockable", EditConditionHides))
+	bool bAllowMovementWhenBlocked = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Block",
+		meta=(EditCondition="bBlockable", EditConditionHides))
+	bool bAllowRotationWhenBlocked = false;
+};
+
+USTRUCT(BlueprintType)
+struct SYNCCOMBATPREDICTION_API FSCP_HitDodgeSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Dodge")
+	bool bDodgeable = false;
+};
+
+USTRUCT(BlueprintType)
+struct SYNCCOMBATPREDICTION_API FSCP_HitDefenseSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Defense", meta=(ShowOnlyInnerProperties))
+	FSCP_HitBlockSettings BlockSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Defense", meta=(ShowOnlyInnerProperties))
+	FSCP_HitDodgeSettings DodgeSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Defense")
+	ESCP_HitSuperArmorLevel RequiredSuperArmor = ESCP_HitSuperArmorLevel::None;
+};
+
+USTRUCT(BlueprintType)
+struct SYNCCOMBATPREDICTION_API FSCP_HitDamageDefenseSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Damage")
+	bool bApplyDamageWhenBlocked = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Damage")
+	bool bApplyDamageWhenDodged = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Damage")
+	ESCP_HitSuperArmorLevel MaxSuperArmorLevelThatTakesDamage = ESCP_HitSuperArmorLevel::SuperArmor2;
+};
+
 USTRUCT(BlueprintType)
 struct SYNCCOMBATPREDICTION_API FSCP_PredictedHit
 {
@@ -223,6 +292,12 @@ struct SYNCCOMBATPREDICTION_API FSCP_PredictedHit
 
 	UPROPERTY(BlueprintReadOnly, Category="Sync Combat Prediction")
 	FSCP_HitTransformSettings TransformSettings;
+
+	UPROPERTY(BlueprintReadOnly, Category="Sync Combat Prediction")
+	FSCP_HitDefenseSettings DefenseSettings;
+
+	UPROPERTY(BlueprintReadOnly, Category="Sync Combat Prediction")
+	FSCP_HitDamageDefenseSettings DamageDefenseSettings;
 
 	UPROPERTY(BlueprintReadOnly, Category="Sync Combat Prediction")
 	bool bIsAuthority = false;

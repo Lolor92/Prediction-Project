@@ -335,12 +335,18 @@ void USCP_AnimNotifyState_PredictedCollision::SweepCollisionWindow(
 					continue;
 				}
 
-				Window.PredictionComponent->ReportHitWithTransformSettings(
+				FSCP_HitTransformSettings TransformSettings;
+				TransformSettings.MovementSettings = MovementSettings;
+				TransformSettings.RotationSettings = RotationSettings;
+
+				Window.PredictionComponent->ReportHitWithSettings(
 					Window.PredictionContext,
 					Hit,
 					ReactionTag,
 					GameplayEffects,
-					HitTransformSettings);
+					TransformSettings,
+					DefenseSettings,
+					DamageDefenseSettings);
 			}
 
 			StepStartTransform = StepEndTransform;

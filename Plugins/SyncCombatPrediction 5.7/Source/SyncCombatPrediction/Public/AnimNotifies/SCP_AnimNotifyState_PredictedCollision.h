@@ -67,7 +67,16 @@ protected:
 	FSCP_GameplayEffectSettings GameplayEffects;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Hit Transform", meta=(ShowOnlyInnerProperties))
-	FSCP_HitTransformSettings HitTransformSettings;
+	FSCP_HitMovementSettings MovementSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Hit Transform", meta=(ShowOnlyInnerProperties))
+	FSCP_HitRotationSettings RotationSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Defense", meta=(ShowOnlyInnerProperties))
+	FSCP_HitDefenseSettings DefenseSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Damage", meta=(ShowOnlyInnerProperties))
+	FSCP_HitDamageDefenseSettings DamageDefenseSettings;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Socket")
 	FName SourceSocketName = TEXT("RightHandSocket");

@@ -96,6 +96,16 @@ public:
 		const FSCP_GameplayEffectSettings& GameplayEffects,
 		const FSCP_HitTransformSettings& TransformSettings);
 
+	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction")
+	bool ReportHitWithSettings(
+		const FSCP_CombatPredictionContext& Context,
+		const FHitResult& HitResult,
+		FGameplayTag ReactionTag,
+		const FSCP_GameplayEffectSettings& GameplayEffects,
+		const FSCP_HitTransformSettings& TransformSettings,
+		const FSCP_HitDefenseSettings& DefenseSettings,
+		const FSCP_HitDamageDefenseSettings& DamageDefenseSettings);
+
 	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction|Reaction")
 	bool PredictTargetReaction(const FSCP_PredictedHit& Hit, UAnimMontage* ReactionMontage);
 
@@ -115,6 +125,14 @@ public:
 		UAnimMontage* ReactionMontage,
 		FSCP_HitTransformSettings TransformSettings);
 
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category="Sync Combat Prediction|Reaction")
+	void ServerConfirmTargetReactionWithSettings(
+		FSCP_CombatPredictionContext Context,
+		AActor* TargetActor,
+		UAnimMontage* ReactionMontage,
+		FSCP_HitTransformSettings TransformSettings,
+		FSCP_HitDefenseSettings DefenseSettings);
+
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastPlayConfirmedTargetReaction(
 		FSCP_CombatPredictionContext Context,
@@ -129,7 +147,8 @@ public:
 		AActor* TargetActor,
 		UAnimMontage* ReactionMontage,
 		float ServerStartTime,
-		FSCP_HitTransformSettings TransformSettings);
+		FSCP_HitTransformSettings TransformSettings,
+		FSCP_HitDefenseSettings DefenseSettings);
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayOwnerTargetReaction(UAnimMontage* ReactionMontage);
@@ -138,7 +157,8 @@ public:
 	void ClientPlayOwnerTargetReactionWithTransform(
 		AActor* InstigatorActor,
 		UAnimMontage* ReactionMontage,
-		FSCP_HitTransformSettings TransformSettings);
+		FSCP_HitTransformSettings TransformSettings,
+		FSCP_HitDefenseSettings DefenseSettings);
 
 	UPROPERTY(BlueprintAssignable, Category="Sync Combat Prediction")
 	FSCP_PredictedHitSignature OnPredictedHit;
@@ -157,6 +177,21 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Sync Combat Prediction|Reaction")
 	bool bAutoConfirmAuthorityReactions = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
+	FGameplayTag BlockingTag;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
+	FGameplayTag DodgingTag;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
+	FGameplayTag SuperArmorTag1;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
+	FGameplayTag SuperArmorTag2;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
+	FGameplayTag SuperArmorTag3;
 
 private:
 	static constexpr int32 MaxPredictionEventId = 32767;
@@ -202,7 +237,8 @@ private:
 		FSCP_CombatPredictionContext Context,
 		AActor* TargetActor,
 		UAnimMontage* ReactionMontage,
-		const FSCP_HitTransformSettings& TransformSettings);
+		const FSCP_HitTransformSettings& TransformSettings,
+		const FSCP_HitDefenseSettings& DefenseSettings);
 	void ApplyGameplayEffectsFromHit(const FSCP_PredictedHit& Hit);
 	void ApplyEffectClassesToActor(
 		AActor* TargetActor,
@@ -213,15 +249,18 @@ private:
 	void ApplyHitTransformEffects(
 		AActor* InstigatorActor,
 		AActor* TargetActor,
-		const FSCP_HitTransformSettings& TransformSettings) const;
+		const FSCP_HitTransformSettings& TransformSettings,
+		const FSCP_HitDefenseSettings& DefenseSettings) const;
 	void ApplyHitMovement(
 		AActor* InstigatorActor,
 		AActor* TargetActor,
-		const FSCP_HitMovementSettings& MovementSettings) const;
+		const FSCP_HitMovementSettings& MovementSettings,
+		const FSCP_HitDefenseSettings& DefenseSettings) const;
 	void ApplyHitRotation(
 		AActor* InstigatorActor,
 		AActor* TargetActor,
-		const FSCP_HitRotationSettings& RotationSettings) const;
+		const FSCP_HitRotationSettings& RotationSettings,
+		const FSCP_HitDefenseSettings& DefenseSettings) const;
 	void ApplyMovementToActor(
 		AActor* RecipientActor,
 		AActor* ReferenceActor,
@@ -248,6 +287,14 @@ private:
 		ESCP_HitTransformReferenceActorSource ReferenceSource,
 		AActor* InstigatorActor,
 		AActor* TargetActor);
+	bool IsAttackBlocked(AActor* InstigatorActor, AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings) const;
+	bool IsAttackDodged(AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings) const;
+	bool HasRequiredSuperArmor(AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings) const;
+	ESCP_HitSuperArmorLevel GetTargetSuperArmorLevel(AActor* TargetActor) const;
+	bool ShouldApplyCleanHitReaction(AActor* InstigatorActor, AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings) const;
+	bool ShouldApplyDamageEffects(AActor* InstigatorActor, AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings,
+		const FSCP_HitDamageDefenseSettings& DamageDefenseSettings) const;
+	static bool IsWithinBlockAngle(const AActor* DefenderActor, const AActor* AttackerActor, float BlockAngleDegrees);
 	void BeginPredictedTargetReaction(float Duration);
 	void EndPredictedTargetReaction();
 	void BeginTargetReactionMovementTolerance(float Duration);
