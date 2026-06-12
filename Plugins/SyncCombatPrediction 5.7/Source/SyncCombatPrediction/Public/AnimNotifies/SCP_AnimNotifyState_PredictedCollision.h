@@ -60,7 +60,8 @@ public:
 	virtual FString GetNotifyName_Implementation() const override;
 
 protected:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Socket")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Socket",
+		meta=(GetOptions="GetSourceSocketNameOptions"))
 	FName SourceSocketName = TEXT("RightHandSocket");
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Reaction")
@@ -143,6 +144,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Debug")
 	bool bDrawDebug = false;
+
+	UFUNCTION()
+	TArray<FName> GetSourceSocketNameOptions() const;
 
 private:
 	UPROPERTY(Transient)

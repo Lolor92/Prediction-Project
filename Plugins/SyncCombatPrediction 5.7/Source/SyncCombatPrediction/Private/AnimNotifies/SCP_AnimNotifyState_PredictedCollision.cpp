@@ -89,6 +89,16 @@ FString USCP_AnimNotifyState_PredictedCollision::GetNotifyName_Implementation() 
 	return TEXT("SCP Predicted Collision");
 }
 
+TArray<FName> USCP_AnimNotifyState_PredictedCollision::GetSourceSocketNameOptions() const
+{
+	return {
+		TEXT("OffHandWeaponSocket"),
+		TEXT("MainHandWeaponSocket"),
+		TEXT("LeftFootSocket"),
+		TEXT("RightFootSocket")
+	};
+}
+
 bool USCP_AnimNotifyState_PredictedCollision::ShouldRunCollision(const AActor* OwnerActor) const
 {
 	if (!OwnerActor)
