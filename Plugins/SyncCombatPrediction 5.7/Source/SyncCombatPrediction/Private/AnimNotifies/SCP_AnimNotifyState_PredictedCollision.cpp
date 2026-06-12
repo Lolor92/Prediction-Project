@@ -95,8 +95,17 @@ TArray<FName> USCP_AnimNotifyState_PredictedCollision::GetSourceSocketNameOption
 		TEXT("OffHandWeaponSocket"),
 		TEXT("MainHandWeaponSocket"),
 		TEXT("LeftFootSocket"),
-		TEXT("RightFootSocket")
+		TEXT("RightFootSocket"),
+		TEXT("Custom")
 	};
+}
+
+FName USCP_AnimNotifyState_PredictedCollision::ResolveSourceSocketName() const
+{
+	static const FName CustomSocketOption(TEXT("Custom"));
+	return SourceSocketName == CustomSocketOption
+		? CustomSourceSocketName
+		: SourceSocketName;
 }
 
 bool USCP_AnimNotifyState_PredictedCollision::ShouldRunCollision(const AActor* OwnerActor) const
@@ -126,10 +135,11 @@ bool USCP_AnimNotifyState_PredictedCollision::BuildSampleTransforms(
 		return false;
 	}
 
+	const FName ResolvedSourceSocketName = ResolveSourceSocketName();
 	const bool bHasSourceSocket =
-		!SourceSocketName.IsNone() && MeshComp->DoesSocketExist(SourceSocketName);
+		!ResolvedSourceSocketName.IsNone() && MeshComp->DoesSocketExist(ResolvedSourceSocketName);
 	const FTransform SourceTransform = bHasSourceSocket
-		? MeshComp->GetSocketTransform(SourceSocketName, RTS_World)
+		? MeshComp->GetSocketTransform(ResolvedSourceSocketName, RTS_World)
 		: MeshComp->GetComponentTransform();
 
 	const FTransform RelativeTransform(

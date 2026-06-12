@@ -64,6 +64,10 @@ protected:
 		meta=(GetOptions="GetSourceSocketNameOptions"))
 	FName SourceSocketName = TEXT("RightHandSocket");
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Socket",
+		meta=(EditCondition="SourceSocketName == 'Custom'", EditConditionHides))
+	FName CustomSourceSocketName = NAME_None;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Combat Prediction|Reaction")
 	FGameplayTag ReactionTag;
 
@@ -149,6 +153,8 @@ protected:
 	TArray<FName> GetSourceSocketNameOptions() const;
 
 private:
+	FName ResolveSourceSocketName() const;
+
 	UPROPERTY(Transient)
 	TMap<USkeletalMeshComponent*, FSCP_ActiveCollisionWindow> ActiveWindows;
 
