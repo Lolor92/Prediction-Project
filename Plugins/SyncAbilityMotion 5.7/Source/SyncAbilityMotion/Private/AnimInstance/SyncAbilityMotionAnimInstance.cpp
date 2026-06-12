@@ -7,8 +7,25 @@
 #include "Data/SyncAbilityMotionTypes.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "HAL/IConsoleManager.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Movement/SyncAbilityMotionCharacterMovementComponent.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogSyncAbilityMotionAnimDiag, Log, All);
+
+namespace
+{
+	TAutoConsoleVariable<int32> CVarSyncAbilityMotionAnimDiagnostics(
+		TEXT("sync.AbilityMotion.AnimDiagnostics"),
+		0,
+		TEXT("Enable low-volume SyncAbilityMotion animation-state diagnostic logs."),
+		ECVF_Default);
+
+	bool IsSyncAbilityMotionAnimDiagnosticsEnabled()
+	{
+		return CVarSyncAbilityMotionAnimDiagnostics.GetValueOnGameThread() != 0;
+	}
+}
 
 void USyncAbilityMotionAnimInstance::NativeInitializeAnimation()
 {
@@ -116,6 +133,24 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 
 	if (!bHasAbilityContext || !Ability)
 	{
+		const FSyncAbilityMotionState PreviousState = SyncMotion->GetAbilityMotionState();
+		if (IsSyncAbilityMotionAnimDiagnosticsEnabled() &&
+			(LastTrackedAbility || LastTrackedMontage || !(PreviousState == FSyncAbilityMotionState())))
+		{
+			UE_LOG(
+				LogSyncAbilityMotionAnimDiag,
+				Log,
+				TEXT("MotionContext cleared Character=%s LastAbility=%s LastMontage=%s LastSeq=%u PreviousState={Blend=%s LowerBody=%s RootMotion=%s InputSuppressed=%s}"),
+				*GetNameSafe(Character),
+				*GetNameSafe(LastTrackedAbility),
+				*GetNameSafe(LastTrackedMontage),
+				LastTrackedAbilityActivationSequenceId,
+				PreviousState.bCanBlendMontage ? TEXT("true") : TEXT("false"),
+				PreviousState.bShouldBlendLowerBody ? TEXT("true") : TEXT("false"),
+				PreviousState.bRootMotionEnabled ? TEXT("true") : TEXT("false"),
+				PreviousState.bMovementInputSuppressed ? TEXT("true") : TEXT("false"));
+		}
+
 		if (USyncAbilityMotionCharacterMovementComponent* SyncMoveComp =
 			Cast<USyncAbilityMotionCharacterMovementComponent>(CharacterMovementComponent))
 		{
@@ -141,6 +176,21 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 		LastTrackedAbilityActivationSequenceId = CurrentActivationSequenceId;
 		LastTrackedMontage = CurrentMontage;
 		bReleasedRootMotionThisMontage = false;
+
+		if (IsSyncAbilityMotionAnimDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncAbilityMotionAnimDiag,
+				Log,
+				TEXT("MotionContext tracked Character=%s Ability=%s Montage=%s Seq=%u Percent=%.2f Authority=%s Local=%s"),
+				*GetNameSafe(Character),
+				*GetNameSafe(Ability),
+				*GetNameSafe(CurrentMontage),
+				CurrentActivationSequenceId,
+				Percent,
+				Character && Character->HasAuthority() ? TEXT("true") : TEXT("false"),
+				Character && Character->IsLocallyControlled() ? TEXT("true") : TEXT("false"));
+		}
 
 		if (USyncAbilityMotionCharacterMovementComponent* SyncMoveComp =
 			Cast<USyncAbilityMotionCharacterMovementComponent>(CharacterMovementComponent))
@@ -189,6 +239,32 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 	}
 
 	if (SyncMotion->GetAbilityMotionState() == DesiredState) return;
+
+	if (IsSyncAbilityMotionAnimDiagnosticsEnabled())
+	{
+		const FSyncAbilityMotionState PreviousState = SyncMotion->GetAbilityMotionState();
+		UE_LOG(
+			LogSyncAbilityMotionAnimDiag,
+			Log,
+			TEXT("MotionState changed Character=%s Ability=%s Montage=%s Seq=%u Percent=%.2f ReleaseReached=%s ReleasedByInput=%s HasInput=%s PausedByCollision=%s Previous={Blend=%s LowerBody=%s RootMotion=%s InputSuppressed=%s} Desired={Blend=%s LowerBody=%s RootMotion=%s InputSuppressed=%s}"),
+			*GetNameSafe(Character),
+			*GetNameSafe(Ability),
+			*GetNameSafe(CurrentMontage),
+			CurrentActivationSequenceId,
+			Percent,
+			bReleaseWasAlreadyReached ? TEXT("true") : TEXT("false"),
+			bReleasedRootMotionThisMontage ? TEXT("true") : TEXT("false"),
+			bHasMovementInput ? TEXT("true") : TEXT("false"),
+			bPausedByCharacterCollision ? TEXT("true") : TEXT("false"),
+			PreviousState.bCanBlendMontage ? TEXT("true") : TEXT("false"),
+			PreviousState.bShouldBlendLowerBody ? TEXT("true") : TEXT("false"),
+			PreviousState.bRootMotionEnabled ? TEXT("true") : TEXT("false"),
+			PreviousState.bMovementInputSuppressed ? TEXT("true") : TEXT("false"),
+			DesiredState.bCanBlendMontage ? TEXT("true") : TEXT("false"),
+			DesiredState.bShouldBlendLowerBody ? TEXT("true") : TEXT("false"),
+			DesiredState.bRootMotionEnabled ? TEXT("true") : TEXT("false"),
+			DesiredState.bMovementInputSuppressed ? TEXT("true") : TEXT("false"));
+	}
 
 	SyncMotion->SetAbilityMotionState(DesiredState);
 }

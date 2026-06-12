@@ -9,7 +9,24 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "HAL/IConsoleManager.h"
 #include "Modules/ModuleManager.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogSyncAbilityMotionAbilityDiag, Log, All);
+
+namespace
+{
+	TAutoConsoleVariable<int32> CVarSyncAbilityMotionAbilityDiagnostics(
+		TEXT("sync.AbilityMotion.AbilityDiagnostics"),
+		0,
+		TEXT("Enable low-volume SyncAbilityMotion ability diagnostic logs."),
+		ECVF_Default);
+
+	bool IsSyncAbilityMotionAbilityDiagnosticsEnabled()
+	{
+		return CVarSyncAbilityMotionAbilityDiagnostics.GetValueOnGameThread() != 0;
+	}
+}
 
 USyncAbilityMotionGameplayAbility::USyncAbilityMotionGameplayAbility()
 {
@@ -30,6 +47,21 @@ void USyncAbilityMotionGameplayAbility::ActivateAbility(const FGameplayAbilitySp
 	ActivationSequenceId = (ActivationSequenceId == MAX_uint32) ? 1u : (ActivationSequenceId + 1u);
 	ResetComboWindow();
 
+	if (IsSyncAbilityMotionAbilityDiagnosticsEnabled())
+	{
+		const AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo();
+		UE_LOG(
+			LogSyncAbilityMotionAbilityDiag,
+			Log,
+			TEXT("Activate Ability=%s Avatar=%s Seq=%u Authority=%s Local=%s Montage=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(Avatar),
+			ActivationSequenceId,
+			Avatar && Avatar->HasAuthority() ? TEXT("true") : TEXT("false"),
+			ActorInfo && ActorInfo->IsLocallyControlled() ? TEXT("true") : TEXT("false"),
+			*GetNameSafe(GetCurrentMontage()));
+	}
+
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 	InterruptOtherActiveAbilities();
 	RotateAvatarToControllerYawOnActivate();
@@ -40,6 +72,22 @@ void USyncAbilityMotionGameplayAbility::EndAbility(const FGameplayAbilitySpecHan
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
+	if (IsSyncAbilityMotionAbilityDiagnosticsEnabled())
+	{
+		const AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo();
+		UE_LOG(
+			LogSyncAbilityMotionAbilityDiag,
+			Log,
+			TEXT("End Ability=%s Avatar=%s Seq=%u Cancelled=%s ReplicateEnd=%s Authority=%s Local=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(Avatar),
+			ActivationSequenceId,
+			bWasCancelled ? TEXT("true") : TEXT("false"),
+			bReplicateEndAbility ? TEXT("true") : TEXT("false"),
+			Avatar && Avatar->HasAuthority() ? TEXT("true") : TEXT("false"),
+			ActorInfo && ActorInfo->IsLocallyControlled() ? TEXT("true") : TEXT("false"));
+	}
+
 	if (ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo()))
 	{
 		if (!Character->IsLocallyControlled())
@@ -63,6 +111,18 @@ bool USyncAbilityMotionGameplayAbility::CanActivateAbility(const FGameplayAbilit
 {
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
 	{
+		if (IsSyncAbilityMotionAbilityDiagnosticsEnabled())
+		{
+			const AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo();
+			UE_LOG(
+				LogSyncAbilityMotionAbilityDiag,
+				Log,
+				TEXT("CanActivate denied by GAS Ability=%s Avatar=%s Authority=%s Local=%s"),
+				*GetNameSafe(this),
+				*GetNameSafe(Avatar),
+				Avatar && Avatar->HasAuthority() ? TEXT("true") : TEXT("false"),
+				ActorInfo && ActorInfo->IsLocallyControlled() ? TEXT("true") : TEXT("false"));
+		}
 		return false;
 	}
 
@@ -72,6 +132,31 @@ bool USyncAbilityMotionGameplayAbility::CanActivateAbility(const FGameplayAbilit
 bool USyncAbilityMotionGameplayAbility::CanInterruptAnimatingAbility(
 	const FGameplayAbilityActorInfo* ActorInfo) const
 {
+	const auto LogLockoutDenied =
+		[this, ActorInfo](const TCHAR* Reason, const UGameplayAbility* AnimatingAbility,
+			const UAnimMontage* AnimatingMontage, float CurrentPosition, float PlayedPercent,
+			float UnlockPercent)
+		{
+			if (IsSyncAbilityMotionAbilityDiagnosticsEnabled())
+			{
+				const AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo();
+				UE_LOG(
+					LogSyncAbilityMotionAbilityDiag,
+					Log,
+					TEXT("CanActivate denied by montage lockout Ability=%s Avatar=%s Reason=%s AnimatingAbility=%s Montage=%s Position=%.3f Played=%.2f Unlock=%.2f Authority=%s Local=%s"),
+					*GetNameSafe(this),
+					*GetNameSafe(Avatar),
+					Reason,
+					*GetNameSafe(AnimatingAbility),
+					*GetNameSafe(AnimatingMontage),
+					CurrentPosition,
+					PlayedPercent,
+					UnlockPercent,
+					Avatar && Avatar->HasAuthority() ? TEXT("true") : TEXT("false"),
+					ActorInfo && ActorInfo->IsLocallyControlled() ? TEXT("true") : TEXT("false"));
+			}
+		};
+
 	if (MontageLockout.bBypassMontageLockout)
 	{
 		return true;
@@ -118,12 +203,14 @@ bool USyncAbilityMotionGameplayAbility::CanInterruptAnimatingAbility(
 	const UAnimMontage* AnimatingMontage = AnimatingAbility->GetCurrentMontage();
 	if (!AnimatingMontage)
 	{
+		LogLockoutDenied(TEXT("NoAnimatingMontage"), AnimatingAbility, nullptr, -1.f, -1.f, -1.f);
 		return false;
 	}
 
 	const float MontageLength = AnimatingMontage->GetPlayLength();
 	if (MontageLength <= KINDA_SMALL_NUMBER)
 	{
+		LogLockoutDenied(TEXT("InvalidMontageLength"), AnimatingAbility, AnimatingMontage, -1.f, -1.f, -1.f);
 		return false;
 	}
 
@@ -131,6 +218,7 @@ bool USyncAbilityMotionGameplayAbility::CanInterruptAnimatingAbility(
 	const UAnimInstance* AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
 	if (!AnimInstance)
 	{
+		LogLockoutDenied(TEXT("NoAnimInstance"), AnimatingAbility, AnimatingMontage, -1.f, -1.f, -1.f);
 		return false;
 	}
 
@@ -140,6 +228,17 @@ bool USyncAbilityMotionGameplayAbility::CanInterruptAnimatingAbility(
 		AnimatingMotionAbility->MontageLockout.MontageProgressBeforeInterrupt,
 		0.f,
 		100.f);
+
+	if (PlayedPercent < UnlockPercent)
+	{
+		LogLockoutDenied(
+			TEXT("ProgressBeforeUnlock"),
+			AnimatingAbility,
+			AnimatingMontage,
+			CurrentPosition,
+			PlayedPercent,
+			UnlockPercent);
+	}
 
 	return PlayedPercent >= UnlockPercent;
 }

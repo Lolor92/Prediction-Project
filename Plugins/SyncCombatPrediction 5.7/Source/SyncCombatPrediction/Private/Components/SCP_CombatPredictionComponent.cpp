@@ -12,12 +12,24 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
+#include "HAL/IConsoleManager.h"
 #include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSyncCombatPrediction, Log, All);
 
 namespace SyncCombatPrediction
 {
+	TAutoConsoleVariable<int32> CVarDiagnostics(
+		TEXT("sync.CombatPrediction.Diagnostics"),
+		0,
+		TEXT("Enable low-volume SyncCombatPrediction diagnostic logs."),
+		ECVF_Default);
+
+	bool IsDiagnosticsEnabled()
+	{
+		return CVarDiagnostics.GetValueOnGameThread() != 0;
+	}
+
 	UAbilitySystemComponent* GetAbilitySystemComponent(AActor* Actor)
 	{
 		if (!Actor)
@@ -66,11 +78,37 @@ FSCP_CombatPredictionContext USCP_CombatPredictionComponent::StartPredictionFrom
 	bHasActivePrediction = ActivePredictionContext.IsValidForPrediction();
 	ResetPredictionEvents();
 
+	if (SyncCombatPrediction::IsDiagnosticsEnabled())
+	{
+		const AActor* OwnerActor = GetOwner();
+		const AActor* AvatarActor = Ability ? Ability->GetAvatarActorFromActorInfo() : nullptr;
+		UE_LOG(
+			LogSyncCombatPrediction,
+			Log,
+			TEXT("PredictionStart Owner={%s} Ability=%s Avatar=%s Valid=%s Context={%s}"),
+			*BuildActorDebugString(OwnerActor),
+			*GetNameSafe(Ability),
+			*GetNameSafe(AvatarActor),
+			bHasActivePrediction ? TEXT("true") : TEXT("false"),
+			*ActivePredictionContext.ToDebugString());
+	}
+
 	return ActivePredictionContext;
 }
 
 void USCP_CombatPredictionComponent::ClearActivePrediction()
 {
+	if (SyncCombatPrediction::IsDiagnosticsEnabled() && bHasActivePrediction)
+	{
+		UE_LOG(
+			LogSyncCombatPrediction,
+			Log,
+			TEXT("PredictionClear Owner={%s} Context={%s} ProcessedTargets=%d"),
+			*BuildActorDebugString(GetOwner()),
+			*ActivePredictionContext.ToDebugString(),
+			ProcessedTargets.Num());
+	}
+
 	ActivePredictionContext = FSCP_CombatPredictionContext();
 	bHasActivePrediction = false;
 	ResetPredictionEvents();
@@ -183,6 +221,16 @@ bool USCP_CombatPredictionComponent::ReportHitWithSettings(
 	AActor* TargetActor = HitResult.GetActor();
 	if (!MarkTargetProcessed(Context, TargetActor))
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled() && TargetActor && !HasProcessedTarget(Context, TargetActor))
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("Hit skipped Owner={%s} Target={%s} Reason=InvalidContextOrTarget Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(TargetActor),
+				*Context.ToDebugString());
+		}
 		return false;
 	}
 
@@ -211,6 +259,20 @@ bool USCP_CombatPredictionComponent::ReportHitWithSettings(
 			*HitResult.ImpactPoint.ToCompactString());
 	}
 
+	if (SyncCombatPrediction::IsDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncCombatPrediction,
+			Log,
+			TEXT("Hit accepted Mode=%s Owner={%s} Target={%s} ReactionTag=%s Impact=%s Context={%s}"),
+			Context.bIsAuthority ? TEXT("Authority") : TEXT("Predicted"),
+			*BuildActorDebugString(GetOwner()),
+			*BuildActorDebugString(TargetActor),
+			*ReactionTag.ToString(),
+			*HitResult.ImpactPoint.ToCompactString(),
+			*Context.ToDebugString());
+	}
+
 	if (Context.bIsAuthority)
 	{
 		OnAuthorityHit.Broadcast(Hit);
@@ -222,6 +284,16 @@ bool USCP_CombatPredictionComponent::ReportHitWithSettings(
 			if (UAnimMontage* ReactionMontage = ReactionData->FindReactionMontage(ReactionTag))
 			{
 				ConfirmTargetReaction(Context, TargetActor, ReactionMontage, TransformSettings, DefenseSettings);
+			}
+			else if (SyncCombatPrediction::IsDiagnosticsEnabled())
+			{
+				UE_LOG(
+					LogSyncCombatPrediction,
+					Log,
+					TEXT("AuthorityReaction skipped Owner={%s} Target={%s} Reason=NoReactionMontage ReactionTag=%s"),
+					*BuildActorDebugString(GetOwner()),
+					*BuildActorDebugString(TargetActor),
+					*ReactionTag.ToString());
 			}
 		}
 	}
@@ -247,6 +319,17 @@ bool USCP_CombatPredictionComponent::PredictTargetReactionFromHit(
 
 	if (!ReactionMontage)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("PredictReaction skipped Owner={%s} Target={%s} Reason=NoReactionMontage ReactionTag=%s Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(Hit.TargetActor),
+				*Hit.ReactionTag.ToString(),
+				*Hit.PredictionContext.ToDebugString());
+		}
 		return false;
 	}
 
@@ -259,11 +342,33 @@ bool USCP_CombatPredictionComponent::PredictTargetReaction(
 {
 	if (!ReactionMontage || !Hit.TargetActor || !Hit.PredictionContext.IsValidForPrediction())
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("PredictReaction skipped Owner={%s} Target={%s} Montage=%s Reason=InvalidInput Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(Hit.TargetActor),
+				*GetNameSafe(ReactionMontage),
+				*Hit.PredictionContext.ToDebugString());
+		}
 		return false;
 	}
 
 	if (Hit.PredictionContext.bIsAuthority)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("PredictReaction skipped Owner={%s} Target={%s} Montage=%s Reason=AuthorityContext Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(Hit.TargetActor),
+				*GetNameSafe(ReactionMontage),
+				*Hit.PredictionContext.ToDebugString());
+		}
 		return false;
 	}
 
@@ -280,6 +385,17 @@ bool USCP_CombatPredictionComponent::PredictTargetReaction(
 
 	if (!bShouldApplyCleanReaction)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("PredictReaction deferred Owner={%s} Target={%s} Montage=%s Reason=DefenseRejectedCleanReaction Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(Hit.TargetActor),
+				*GetNameSafe(ReactionMontage),
+				*Hit.PredictionContext.ToDebugString());
+		}
 		ServerConfirmTargetReactionWithSettings(
 			Hit.PredictionContext,
 			Hit.TargetActor,
@@ -301,6 +417,19 @@ bool USCP_CombatPredictionComponent::PredictTargetReaction(
 	}
 
 	const bool bPlayed = PlayReactionMontageOnActor(Hit.TargetActor, ReactionMontage, 0.f, true);
+
+	if (SyncCombatPrediction::IsDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncCombatPrediction,
+			Log,
+			TEXT("PredictReaction played Owner={%s} Target={%s} Montage=%s Played=%s Context={%s}"),
+			*BuildActorDebugString(GetOwner()),
+			*BuildActorDebugString(Hit.TargetActor),
+			*GetNameSafe(ReactionMontage),
+			bPlayed ? TEXT("true") : TEXT("false"),
+			*Hit.PredictionContext.ToDebugString());
+	}
 
 	ServerConfirmTargetReactionWithSettings(
 		Hit.PredictionContext,
@@ -358,6 +487,17 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority() || !TargetActor || !ReactionMontage)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("ConfirmReaction skipped Owner={%s} Target={%s} Montage=%s Reason=InvalidAuthorityOrInput Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(TargetActor),
+				*GetNameSafe(ReactionMontage),
+				*Context.ToDebugString());
+		}
 		return;
 	}
 
@@ -366,9 +506,24 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 
 	ApplyHitTransformEffects(GetOwner(), TargetActor, TransformSettings, DefenseSettings);
 	const bool bShouldApplyCleanReaction = ShouldApplyCleanHitReaction(GetOwner(), TargetActor, DefenseSettings);
+	bool bPlayedOnServer = false;
 	if (bShouldApplyCleanReaction)
 	{
-		PlayReactionMontageOnActor(TargetActor, ReactionMontage, 0.f, true);
+		bPlayedOnServer = PlayReactionMontageOnActor(TargetActor, ReactionMontage, 0.f, true);
+	}
+
+	if (SyncCombatPrediction::IsDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncCombatPrediction,
+			Log,
+			TEXT("ConfirmReaction Owner={%s} Target={%s} Montage=%s Clean=%s ServerPlayed=%s Context={%s}"),
+			*BuildActorDebugString(GetOwner()),
+			*BuildActorDebugString(TargetActor),
+			*GetNameSafe(ReactionMontage),
+			bShouldApplyCleanReaction ? TEXT("true") : TEXT("false"),
+			bPlayedOnServer ? TEXT("true") : TEXT("false"),
+			*Context.ToDebugString());
 	}
 
 	if (USCP_CombatPredictionComponent* TargetPredictionComponent =
@@ -428,22 +583,61 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTra
 {
 	if (!TargetActor)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("MulticastReaction skipped Owner={%s} Reason=NoTarget Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*Context.ToDebugString());
+		}
 		return;
 	}
 
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("MulticastReaction skipped Owner={%s} Target={%s} Reason=AuthorityInstance Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(TargetActor),
+				*Context.ToDebugString());
+		}
 		return;
 	}
 
 	if (ConsumePendingPredictedReaction(Context, TargetActor))
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("MulticastReaction consumed prediction Owner={%s} Target={%s} Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(TargetActor),
+				*Context.ToDebugString());
+		}
 		return;
 	}
 
 	const APawn* TargetPawn = Cast<APawn>(TargetActor);
 	if (TargetPawn && TargetPawn->IsLocallyControlled())
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("MulticastReaction skipped Owner={%s} Target={%s} Reason=LocallyControlledTarget Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(TargetActor),
+				*Context.ToDebugString());
+		}
 		return;
 	}
 
@@ -459,7 +653,30 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTra
 			0.f,
 			ReactionMontage->GetPlayLength());
 
-		PlayReactionMontageOnActor(TargetActor, ReactionMontage, StartPosition, false);
+		const bool bPlayed = PlayReactionMontageOnActor(TargetActor, ReactionMontage, StartPosition, false);
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("MulticastReaction played Owner={%s} Target={%s} Montage=%s Start=%.3f Played=%s Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(TargetActor),
+				*GetNameSafe(ReactionMontage),
+				StartPosition,
+				bPlayed ? TEXT("true") : TEXT("false"),
+				*Context.ToDebugString());
+		}
+	}
+	else if (SyncCombatPrediction::IsDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncCombatPrediction,
+			Log,
+			TEXT("MulticastReaction transform-only Owner={%s} Target={%s} Context={%s}"),
+			*BuildActorDebugString(GetOwner()),
+			*BuildActorDebugString(TargetActor),
+			*Context.ToDebugString());
 	}
 }
 
@@ -481,13 +698,42 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_
 {
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("ClientOwnerReaction skipped Owner={%s} Reason=AuthorityInstance Montage=%s"),
+				*BuildActorDebugString(GetOwner()),
+				*GetNameSafe(ReactionMontage));
+		}
 		return;
 	}
 
 	ApplyHitTransformEffects(InstigatorActor, GetOwner(), TransformSettings, DefenseSettings);
 	if (ReactionMontage)
 	{
-		PlayReactionMontageOnActor(GetOwner(), ReactionMontage, 0.f, true);
+		const bool bPlayed = PlayReactionMontageOnActor(GetOwner(), ReactionMontage, 0.f, true);
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("ClientOwnerReaction played Owner={%s} Instigator={%s} Montage=%s Played=%s"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(InstigatorActor),
+				*GetNameSafe(ReactionMontage),
+				bPlayed ? TEXT("true") : TEXT("false"));
+		}
+	}
+	else if (SyncCombatPrediction::IsDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncCombatPrediction,
+			Log,
+			TEXT("ClientOwnerReaction transform-only Owner={%s} Instigator={%s}"),
+			*BuildActorDebugString(GetOwner()),
+			*BuildActorDebugString(InstigatorActor));
 	}
 }
 
@@ -611,6 +857,15 @@ bool USCP_CombatPredictionComponent::PlayReactionMontageOnActor(
 {
 	if (!TargetActor || !ReactionMontage)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("PlayReaction failed Target={%s} Montage=%s Reason=InvalidInput"),
+				*BuildActorDebugString(TargetActor),
+				*GetNameSafe(ReactionMontage));
+		}
 		return false;
 	}
 
@@ -618,18 +873,47 @@ bool USCP_CombatPredictionComponent::PlayReactionMontageOnActor(
 		TargetActor->FindComponentByClass<USkeletalMeshComponent>();
 	if (!MeshComponent)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("PlayReaction failed Target={%s} Montage=%s Reason=NoSkeletalMesh"),
+				*BuildActorDebugString(TargetActor),
+				*GetNameSafe(ReactionMontage));
+		}
 		return false;
 	}
 
 	UAnimInstance* AnimInstance = MeshComponent->GetAnimInstance();
 	if (!AnimInstance)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("PlayReaction failed Target={%s} Montage=%s Reason=NoAnimInstance Mesh=%s"),
+				*BuildActorDebugString(TargetActor),
+				*GetNameSafe(ReactionMontage),
+				*GetNameSafe(MeshComponent));
+		}
 		return false;
 	}
 
 	const bool bWasPlaying = AnimInstance->Montage_IsPlaying(ReactionMontage);
 	if (bWasPlaying && !bForceRestart)
 	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("PlayReaction already-playing Target={%s} Montage=%s Start=%.3f"),
+				*BuildActorDebugString(TargetActor),
+				*GetNameSafe(ReactionMontage),
+				StartPosition);
+		}
 		return true;
 	}
 
@@ -651,11 +935,26 @@ bool USCP_CombatPredictionComponent::PlayReactionMontageOnActor(
 			bWasPlaying ? TEXT("true") : TEXT("false"));
 	}
 
-	return AnimInstance->Montage_Play(
+	const float PlayResult = AnimInstance->Montage_Play(
 		ReactionMontage,
 		1.f,
 		EMontagePlayReturnType::MontageLength,
-		StartPosition) > 0.f;
+		StartPosition);
+
+	if (SyncCombatPrediction::IsDiagnosticsEnabled() && PlayResult <= 0.f)
+	{
+		UE_LOG(
+			LogSyncCombatPrediction,
+			Log,
+			TEXT("PlayReaction failed Target={%s} Montage=%s Start=%.3f ForceRestart=%s WasPlaying=%s Reason=MontagePlayReturnedZero"),
+			*BuildActorDebugString(TargetActor),
+			*GetNameSafe(ReactionMontage),
+			StartPosition,
+			bForceRestart ? TEXT("true") : TEXT("false"),
+			bWasPlaying ? TEXT("true") : TEXT("false"));
+	}
+
+	return PlayResult > 0.f;
 }
 
 void USCP_CombatPredictionComponent::ApplyGameplayEffectsFromHit(
