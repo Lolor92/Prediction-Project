@@ -161,14 +161,48 @@ void USyncCombatComponent::OnCharacterMovementModeChanged(ACharacter* Character,
 	}
 }
 
-void USyncCombatComponent::ClientApplyHitWindowTransformPrediction_Implementation(
+void USyncCombatComponent::MulticastApplyHitReactionVisualPrediction_Implementation(
+	AActor* TargetActor,
 	const bool bApplyRotation,
 	const FRotator Rotation,
 	const ESyncCombatHitWindowTeleportType RotationTeleportType,
 	const bool bApplyLocation,
 	const FVector Location,
 	const bool bSweepLocation,
-	const ESyncCombatHitWindowTeleportType LocationTeleportType)
+	const ESyncCombatHitWindowTeleportType LocationTeleportType,
+	const FGameplayTagContainer ReactionTriggerTags,
+	const FGameplayTagContainer ReactionAbilityTags)
+{
+	if (!TargetActor || TargetActor->HasAuthority())
+	{
+		return;
+	}
+
+	if (USyncCombatComponent* TargetCombatComponent = TargetActor->FindComponentByClass<USyncCombatComponent>())
+	{
+		TargetCombatComponent->ApplyHitReactionVisualPrediction(
+			bApplyRotation,
+			Rotation,
+			RotationTeleportType,
+			bApplyLocation,
+			Location,
+			bSweepLocation,
+			LocationTeleportType,
+			ReactionTriggerTags,
+			ReactionAbilityTags);
+	}
+}
+
+void USyncCombatComponent::ApplyHitReactionVisualPrediction(
+	const bool bApplyRotation,
+	const FRotator& Rotation,
+	const ESyncCombatHitWindowTeleportType RotationTeleportType,
+	const bool bApplyLocation,
+	const FVector& Location,
+	const bool bSweepLocation,
+	const ESyncCombatHitWindowTeleportType LocationTeleportType,
+	const FGameplayTagContainer& ReactionTriggerTags,
+	const FGameplayTagContainer& ReactionAbilityTags)
 {
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor || OwnerActor->HasAuthority())
@@ -184,6 +218,11 @@ void USyncCombatComponent::ClientApplyHitWindowTransformPrediction_Implementatio
 	if (bApplyLocation)
 	{
 		OwnerActor->SetActorLocation(Location, bSweepLocation, nullptr, ToTeleportType(LocationTeleportType));
+	}
+
+	if (TagReactionRuntime)
+	{
+		TagReactionRuntime->PredictReactionVisuals(ReactionTriggerTags, ReactionAbilityTags);
 	}
 }
 

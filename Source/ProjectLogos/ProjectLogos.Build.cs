@@ -17,7 +17,9 @@ public class ProjectLogos : ModuleRules
 			"GameplayAbilities",
 			"GameplayTasks", 
 			"SyncAbilityMotion",
-			"SyncCombat" });
+			"SyncCombat",
+			"SyncCombatPrediction"
+		});
 		
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 	}

@@ -163,6 +163,30 @@ void FSyncCombatTagReactionRuntime::OnReactionTagChanged(const FGameplayTag Tag,
 	}
 }
 
+void FSyncCombatTagReactionRuntime::PredictReactionVisuals(const FGameplayTagContainer& TriggerTags,
+	const FGameplayTagContainer& AbilityTags)
+{
+	UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
+	if (!ASC)
+	{
+		return;
+	}
+
+	if (AnimBoolBindings && !TriggerTags.IsEmpty())
+	{
+		for (const FSyncCombatAnimBoolBinding& Binding : *AnimBoolBindings)
+		{
+			if (!Binding.Tags.HasAny(TriggerTags)) continue;
+			SetAnimBool(Binding, true);
+		}
+	}
+
+	if (!AbilityTags.IsEmpty() && !ASC->IsOwnerActorAuthoritative())
+	{
+		ASC->TryActivateAbilitiesByTag(AbilityTags);
+	}
+}
+
 void FSyncCombatTagReactionRuntime::CacheAnimBoolBindings()
 {
 	AActor* OwnerActor = OwningActor.Get();

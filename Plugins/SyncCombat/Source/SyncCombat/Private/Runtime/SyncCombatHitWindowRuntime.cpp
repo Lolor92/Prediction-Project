@@ -418,6 +418,8 @@ void FSyncCombatHitWindowRuntime::TryApplyHitGameplayEffects(AActor* HitActor, c
 		bWasDodged,
 		TargetSuperArmorLevel);
 	const bool bWillApplyCleanHitReactions = !bHasDefenseOutcome;
+	TMap<FGameplayTag, int32> PreviousReactionTagCounts;
+	CaptureReactionTagCounts(HitActor, PreviousReactionTagCounts);
 
 	UE_LOG(LogPLCombatHitDetectionRuntime, VeryVerbose,
 		TEXT("HitWindowResult Source=%s Target=%s Depth=%d HitActors=%d Blocked=%d Parried=%d Dodged=%d SuperArmor=%d TargetSuperArmorLevel=%d WillApplyDamage=%d WillApplyCleanHitReactions=%d ReactionEffects=[%s] DamageEffects=[%s]"),
@@ -467,6 +469,14 @@ void FSyncCombatHitWindowRuntime::TryApplyHitGameplayEffects(AActor* HitActor, c
 			bHasSuperArmor
 		);
 
+		SendHitReactionVisualPrediction(
+			HitActor,
+			bWasBlocked,
+			bWasDodged,
+			bHasSuperArmor,
+			FGameplayTagContainer(),
+			FGameplayTagContainer());
+
 		return;
 	}
 
@@ -477,6 +487,17 @@ void FSyncCombatHitWindowRuntime::TryApplyHitGameplayEffects(AActor* HitActor, c
 		HitResult,
 		ActiveHitWindowSettings.GameplayEffectsToApply
 	);
+
+	FGameplayTagContainer ReactionTriggerTags;
+	FGameplayTagContainer ReactionAbilityTags;
+	BuildReactionPredictionTags(HitActor, PreviousReactionTagCounts, ReactionTriggerTags, ReactionAbilityTags);
+	SendHitReactionVisualPrediction(
+		HitActor,
+		bWasBlocked,
+		bWasDodged,
+		bHasSuperArmor,
+		ReactionTriggerTags,
+		ReactionAbilityTags);
 
 	// Delayed reaction effects also only happen on a clean hit.
 	// Block / parry / dodge / super armor prevent these because the function returned above.
@@ -747,7 +768,6 @@ void FSyncCombatHitWindowRuntime::ApplyHitWindowTransformEffects(AActor* HitActo
 	const bool bWasDodged, const bool bHasSuperArmor) const
 {
 	if (!HitActor || HitActor == CombatComponent.GetOwner()) return;
-	SendTargetClientTransformPrediction(HitActor, bWasBlocked, bWasDodged, bHasSuperArmor);
 	ApplyHitWindowRotation(HitActor, ESyncCombatHitWindowTransformTriggerTiming::OnHit, bWasBlocked, bWasDodged, bHasSuperArmor);
 	ApplyHitWindowMovement(HitActor, ESyncCombatHitWindowTransformTriggerTiming::OnHit, bWasBlocked, bWasDodged, bHasSuperArmor);
 }
@@ -1050,8 +1070,73 @@ bool FSyncCombatHitWindowRuntime::CalculateRotationTargetRotation(AActor* Recipi
 	return true;
 }
 
-void FSyncCombatHitWindowRuntime::SendTargetClientTransformPrediction(AActor* HitActor, const bool bWasBlocked,
-	const bool bWasDodged, const bool bHasSuperArmor) const
+void FSyncCombatHitWindowRuntime::CaptureReactionTagCounts(AActor* HitActor,
+	TMap<FGameplayTag, int32>& OutTagCounts) const
+{
+	OutTagCounts.Reset();
+
+	const USyncCombatComponent* TargetCombatComponent = FindCombatComponent(HitActor);
+	const UAbilitySystemComponent* TargetASC = USyncCombatFunctionLibrary::GetAbilitySystemComponent(HitActor);
+	const USyncCombatTagReactionData* ReactionData = TargetCombatComponent
+		? TargetCombatComponent->GetTagReactionData()
+		: nullptr;
+	if (!TargetASC || !ReactionData)
+	{
+		return;
+	}
+
+	for (const FSyncCombatTagReactionBinding& Reaction : ReactionData->Reactions)
+	{
+		if (!Reaction.TriggerTag.IsValid()) continue;
+		OutTagCounts.FindOrAdd(Reaction.TriggerTag) = TargetASC->GetGameplayTagCount(Reaction.TriggerTag);
+	}
+}
+
+void FSyncCombatHitWindowRuntime::BuildReactionPredictionTags(AActor* HitActor,
+	const TMap<FGameplayTag, int32>& PreviousTagCounts, FGameplayTagContainer& OutTriggerTags,
+	FGameplayTagContainer& OutAbilityTags) const
+{
+	OutTriggerTags.Reset();
+	OutAbilityTags.Reset();
+
+	const USyncCombatComponent* TargetCombatComponent = FindCombatComponent(HitActor);
+	const UAbilitySystemComponent* TargetASC = USyncCombatFunctionLibrary::GetAbilitySystemComponent(HitActor);
+	const USyncCombatTagReactionData* ReactionData = TargetCombatComponent
+		? TargetCombatComponent->GetTagReactionData()
+		: nullptr;
+	if (!TargetASC || !ReactionData)
+	{
+		return;
+	}
+
+	for (const FSyncCombatTagReactionBinding& Reaction : ReactionData->Reactions)
+	{
+		if (!Reaction.TriggerTag.IsValid()) continue;
+
+		const int32 PreviousCount = PreviousTagCounts.FindRef(Reaction.TriggerTag);
+		const int32 CurrentCount = TargetASC->GetGameplayTagCount(Reaction.TriggerTag);
+		if (CurrentCount <= PreviousCount)
+		{
+			continue;
+		}
+
+		if (Reaction.Policy != ESyncCombatTagReactionPolicy::OnAdd
+			&& Reaction.Policy != ESyncCombatTagReactionPolicy::Both)
+		{
+			continue;
+		}
+
+		OutTriggerTags.AddTag(Reaction.TriggerTag);
+		if (Reaction.Ability.AbilityTag.IsValid())
+		{
+			OutAbilityTags.AddTag(Reaction.Ability.AbilityTag);
+		}
+	}
+}
+
+void FSyncCombatHitWindowRuntime::SendHitReactionVisualPrediction(AActor* HitActor, const bool bWasBlocked,
+	const bool bWasDodged, const bool bHasSuperArmor, const FGameplayTagContainer& ReactionTriggerTags,
+	const FGameplayTagContainer& ReactionAbilityTags) const
 {
 	AActor* const OwnerActor = CombatComponent.GetOwner();
 	if (!OwnerActor || !OwnerActor->HasAuthority() || !HitActor || HitActor == OwnerActor)
@@ -1109,19 +1194,22 @@ void FSyncCombatHitWindowRuntime::SendTargetClientTransformPrediction(AActor* Hi
 		}
 	}
 
-	if (!bApplyRotation && !bApplyLocation)
+	if (!bApplyRotation && !bApplyLocation && ReactionTriggerTags.IsEmpty() && ReactionAbilityTags.IsEmpty())
 	{
 		return;
 	}
 
-	TargetCombatComponent->ClientApplyHitWindowTransformPrediction(
+	CombatComponent.MulticastApplyHitReactionVisualPrediction(
+		HitActor,
 		bApplyRotation,
 		PredictedRotation,
 		RotationTeleportType,
 		bApplyLocation,
 		PredictedLocation,
 		bSweepLocation,
-		LocationTeleportType);
+		LocationTeleportType,
+		ReactionTriggerTags,
+		ReactionAbilityTags);
 }
 
 AActor* FSyncCombatHitWindowRuntime::ResolveTransformReferenceActor(

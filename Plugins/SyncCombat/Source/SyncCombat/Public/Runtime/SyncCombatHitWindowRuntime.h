@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Data/SyncCombatHitWindowTypes.h"
+#include "GameplayTagContainer.h"
 #include "UObject/ObjectKey.h"
 
 class AActor;
@@ -114,8 +115,12 @@ private:
 		const FSyncCombatHitWindowMovementSettings& MovementSettings, FVector& OutLocation) const;
 	bool CalculateRotationTargetRotation(AActor* RecipientActor, AActor* ReferenceActor,
 		const FSyncCombatHitWindowRotationSettings& RotationSettings, FRotator& OutRotation) const;
-	void SendTargetClientTransformPrediction(AActor* HitActor, bool bWasBlocked, bool bWasDodged,
-		bool bHasSuperArmor) const;
+	void CaptureReactionTagCounts(AActor* HitActor, TMap<FGameplayTag, int32>& OutTagCounts) const;
+	void BuildReactionPredictionTags(AActor* HitActor, const TMap<FGameplayTag, int32>& PreviousTagCounts,
+		FGameplayTagContainer& OutTriggerTags, FGameplayTagContainer& OutAbilityTags) const;
+	void SendHitReactionVisualPrediction(AActor* HitActor, bool bWasBlocked, bool bWasDodged,
+		bool bHasSuperArmor, const FGameplayTagContainer& ReactionTriggerTags,
+		const FGameplayTagContainer& ReactionAbilityTags) const;
 	AActor* ResolveTransformReferenceActor(ESyncCombatHitWindowReferenceActorSource ReferenceSource, AActor* HitActor,
 		ESyncCombatHitWindowTransformTriggerTiming InvocationTiming) const;
 	void ExecuteHitWindowGameplayCues(AActor* HitActor, const FHitResult* HitResult,

@@ -24,6 +24,7 @@ public:
 	void Initialize(AActor* InOwnerActor, UAbilitySystemComponent* InAbilitySystemComponent,
 		USyncCombatTagReactionData* InTagReactionData, TArray<FSyncCombatAnimBoolBinding>& InAnimBoolBindings);
 	void Deinitialize();
+	void PredictReactionVisuals(const FGameplayTagContainer& TriggerTags, const FGameplayTagContainer& AbilityTags);
 
 private:
 	void BindTagReactionEvents();

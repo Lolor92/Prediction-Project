@@ -181,10 +181,15 @@ private:
 	void ClearMovementModeChanged();
 	UFUNCTION()
 	void OnCharacterMovementModeChanged(ACharacter* Character, EMovementMode PrevMovementMode, uint8 PreviousCustomMode);
-	UFUNCTION(Client, Unreliable)
-	void ClientApplyHitWindowTransformPrediction(bool bApplyRotation, FRotator Rotation,
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastApplyHitReactionVisualPrediction(AActor* TargetActor, bool bApplyRotation, FRotator Rotation,
 		ESyncCombatHitWindowTeleportType RotationTeleportType, bool bApplyLocation, FVector Location,
-		bool bSweepLocation, ESyncCombatHitWindowTeleportType LocationTeleportType);
+		bool bSweepLocation, ESyncCombatHitWindowTeleportType LocationTeleportType,
+		FGameplayTagContainer ReactionTriggerTags, FGameplayTagContainer ReactionAbilityTags);
+	void ApplyHitReactionVisualPrediction(bool bApplyRotation, const FRotator& Rotation,
+		ESyncCombatHitWindowTeleportType RotationTeleportType, bool bApplyLocation, const FVector& Location,
+		bool bSweepLocation, ESyncCombatHitWindowTeleportType LocationTeleportType,
+		const FGameplayTagContainer& ReactionTriggerTags, const FGameplayTagContainer& ReactionAbilityTags);
 	void TryAutoInitializeCombat();
 	void ScheduleAutoInitializeRetry();
 	void ClearAutoInitializeRetry();

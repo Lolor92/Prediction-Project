@@ -1,4 +1,5 @@
 ﻿#include "GAS/Ability/PL_GameplayAbility.h"
+#include "BlueprintLibrary/SCP_CombatPredictionBlueprintLibrary.h"
 
 UPL_GameplayAbility::UPL_GameplayAbility()
 {
@@ -24,6 +25,9 @@ void UPL_GameplayAbility::ActivateAbility(const FGameplayAbilitySpecHandle Handl
 	const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	
+	FSCP_CombatPredictionContext Context;
+	USCP_CombatPredictionBlueprintLibrary::StartCombatPredictionFromAbility(this, Context);
 }
 
 void UPL_GameplayAbility::EndAbility(const FGameplayAbilitySpecHandle Handle,
