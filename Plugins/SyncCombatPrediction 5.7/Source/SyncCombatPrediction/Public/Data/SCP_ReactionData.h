@@ -19,6 +19,9 @@ struct FSCP_ReactionMontageEntry
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reaction")
 	TObjectPtr<UAnimMontage> Montage = nullptr;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reaction")
+	bool bCancelActiveAbilityOnCleanHit = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reaction", meta=(TitleProperty="GameplayEffectClass"))
 	TArray<TSubclassOf<UGameplayEffect>> TargetEffects;
 };

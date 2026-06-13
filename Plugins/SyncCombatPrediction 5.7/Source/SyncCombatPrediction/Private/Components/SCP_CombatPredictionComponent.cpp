@@ -4,6 +4,7 @@
 #include "Animation/AnimMontage.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
+#include "Abilities/GameplayAbility.h"
 #include "BlueprintLibrary/SCP_CombatPredictionBlueprintLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Data/SCP_ReactionData.h"
@@ -281,9 +282,22 @@ bool USCP_CombatPredictionComponent::ReportHitWithSettings(
 
 		if (bAutoConfirmAuthorityReactions && ReactionData)
 		{
-			if (UAnimMontage* ReactionMontage = ReactionData->FindReactionMontage(ReactionTag))
+			if (const FSCP_ReactionMontageEntry* Reaction = ReactionData->FindReaction(ReactionTag))
 			{
-				ConfirmTargetReaction(Context, TargetActor, ReactionMontage, TransformSettings, DefenseSettings);
+				if (Reaction->Montage)
+				{
+					ConfirmTargetReaction(Context, TargetActor, Reaction->Montage, TransformSettings, DefenseSettings);
+				}
+				else if (SyncCombatPrediction::IsDiagnosticsEnabled())
+				{
+					UE_LOG(
+						LogSyncCombatPrediction,
+						Log,
+						TEXT("AuthorityReaction skipped Owner={%s} Target={%s} Reason=NoReactionMontage ReactionTag=%s"),
+						*BuildActorDebugString(GetOwner()),
+						*BuildActorDebugString(TargetActor),
+						*ReactionTag.ToString());
+				}
 			}
 			else if (SyncCombatPrediction::IsDiagnosticsEnabled())
 			{
@@ -406,6 +420,8 @@ bool USCP_CombatPredictionComponent::PredictTargetReaction(
 	}
 
 	AddPendingPredictedReaction(Hit.PredictionContext, Hit.TargetActor);
+	const bool bCancelActiveAbilityOnCleanHit =
+		ShouldCancelActiveAbilityForReaction(Hit.ReactionTag, ReactionMontage);
 	if (USCP_CombatPredictionComponent* TargetPredictionComponent =
 		Hit.TargetActor->FindComponentByClass<USCP_CombatPredictionComponent>())
 	{
@@ -416,7 +432,12 @@ bool USCP_CombatPredictionComponent::PredictTargetReaction(
 		TargetPredictionComponent->BeginPredictedTargetReaction(PredictedDuration);
 	}
 
-	const bool bPlayed = PlayReactionMontageOnActor(Hit.TargetActor, ReactionMontage, 0.f, true);
+	const bool bPlayed = PlayReactionMontageOnActor(
+		Hit.TargetActor,
+		ReactionMontage,
+		0.f,
+		true,
+		bCancelActiveAbilityOnCleanHit);
 
 	if (SyncCombatPrediction::IsDiagnosticsEnabled())
 	{
@@ -509,7 +530,12 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 	bool bPlayedOnServer = false;
 	if (bShouldApplyCleanReaction)
 	{
-		bPlayedOnServer = PlayReactionMontageOnActor(TargetActor, ReactionMontage, 0.f, true);
+		bPlayedOnServer = PlayReactionMontageOnActor(
+			TargetActor,
+			ReactionMontage,
+			0.f,
+			true,
+			ShouldCancelActiveAbilityForReaction(FGameplayTag(), ReactionMontage));
 	}
 
 	if (SyncCombatPrediction::IsDiagnosticsEnabled())
@@ -538,6 +564,7 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 		TargetPredictionComponent->ClientPlayOwnerTargetReactionWithTransform(
 			GetOwner(),
 			bShouldApplyCleanReaction ? ReactionMontage : nullptr,
+			bShouldApplyCleanReaction && ShouldCancelActiveAbilityForReaction(FGameplayTag(), ReactionMontage),
 			TransformSettings,
 			DefenseSettings);
 	}
@@ -551,6 +578,7 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 		GetOwner(),
 		TargetActor,
 		bShouldApplyCleanReaction ? ReactionMontage : nullptr,
+		bShouldApplyCleanReaction && ShouldCancelActiveAbilityForReaction(FGameplayTag(), ReactionMontage),
 		ServerStartTime,
 		TransformSettings,
 		DefenseSettings);
@@ -560,6 +588,7 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReaction_Implem
 	FSCP_CombatPredictionContext Context,
 	AActor* TargetActor,
 	UAnimMontage* ReactionMontage,
+	bool bCancelActiveAbilityOnCleanHit,
 	float ServerStartTime)
 {
 	MulticastPlayConfirmedTargetReactionWithTransform_Implementation(
@@ -567,6 +596,7 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReaction_Implem
 		GetOwner(),
 		TargetActor,
 		ReactionMontage,
+		bCancelActiveAbilityOnCleanHit,
 		ServerStartTime,
 		FSCP_HitTransformSettings(),
 		FSCP_HitDefenseSettings());
@@ -577,6 +607,7 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTra
 	AActor* InstigatorActor,
 	AActor* TargetActor,
 	UAnimMontage* ReactionMontage,
+	bool bCancelActiveAbilityOnCleanHit,
 	float ServerStartTime,
 	FSCP_HitTransformSettings TransformSettings,
 	FSCP_HitDefenseSettings DefenseSettings)
@@ -653,7 +684,12 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTra
 			0.f,
 			ReactionMontage->GetPlayLength());
 
-		const bool bPlayed = PlayReactionMontageOnActor(TargetActor, ReactionMontage, StartPosition, false);
+		const bool bPlayed = PlayReactionMontageOnActor(
+			TargetActor,
+			ReactionMontage,
+			StartPosition,
+			false,
+			bCancelActiveAbilityOnCleanHit);
 		if (SyncCombatPrediction::IsDiagnosticsEnabled())
 		{
 			UE_LOG(
@@ -681,11 +717,13 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTra
 }
 
 void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReaction_Implementation(
-	UAnimMontage* ReactionMontage)
+	UAnimMontage* ReactionMontage,
+	bool bCancelActiveAbilityOnCleanHit)
 {
 	ClientPlayOwnerTargetReactionWithTransform_Implementation(
 		nullptr,
 		ReactionMontage,
+		bCancelActiveAbilityOnCleanHit,
 		FSCP_HitTransformSettings(),
 		FSCP_HitDefenseSettings());
 }
@@ -693,6 +731,7 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReaction_Implementatio
 void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_Implementation(
 	AActor* InstigatorActor,
 	UAnimMontage* ReactionMontage,
+	bool bCancelActiveAbilityOnCleanHit,
 	FSCP_HitTransformSettings TransformSettings,
 	FSCP_HitDefenseSettings DefenseSettings)
 {
@@ -713,7 +752,12 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_
 	ApplyHitTransformEffects(InstigatorActor, GetOwner(), TransformSettings, DefenseSettings);
 	if (ReactionMontage)
 	{
-		const bool bPlayed = PlayReactionMontageOnActor(GetOwner(), ReactionMontage, 0.f, true);
+		const bool bPlayed = PlayReactionMontageOnActor(
+			GetOwner(),
+			ReactionMontage,
+			0.f,
+			true,
+			bCancelActiveAbilityOnCleanHit);
 		if (SyncCombatPrediction::IsDiagnosticsEnabled())
 		{
 			UE_LOG(
@@ -853,7 +897,8 @@ bool USCP_CombatPredictionComponent::PlayReactionMontageOnActor(
 	AActor* TargetActor,
 	UAnimMontage* ReactionMontage,
 	float StartPosition,
-	bool bForceRestart) const
+	bool bForceRestart,
+	bool bCancelActiveAbilityOnCleanHit) const
 {
 	if (!TargetActor || !ReactionMontage)
 	{
@@ -922,6 +967,11 @@ bool USCP_CombatPredictionComponent::PlayReactionMontageOnActor(
 		AnimInstance->Montage_Stop(0.f, ReactionMontage);
 	}
 
+	if (bCancelActiveAbilityOnCleanHit)
+	{
+		CancelTargetAnimatingAbilityForReaction(TargetActor);
+	}
+
 	if (bLogReportedHits)
 	{
 		UE_LOG(
@@ -955,6 +1005,54 @@ bool USCP_CombatPredictionComponent::PlayReactionMontageOnActor(
 	}
 
 	return PlayResult > 0.f;
+}
+
+void USCP_CombatPredictionComponent::CancelTargetAnimatingAbilityForReaction(AActor* TargetActor) const
+{
+	UAbilitySystemComponent* TargetASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(TargetActor);
+	if (!TargetASC)
+	{
+		return;
+	}
+
+	UGameplayAbility* AnimatingAbility = TargetASC->GetAnimatingAbility();
+	if (!AnimatingAbility)
+	{
+		return;
+	}
+
+	TargetASC->CancelAbility(AnimatingAbility);
+}
+
+bool USCP_CombatPredictionComponent::ShouldCancelActiveAbilityForReaction(
+	FGameplayTag ReactionTag,
+	const UAnimMontage* ReactionMontage) const
+{
+	if (!ReactionData)
+	{
+		return false;
+	}
+
+	if (const FSCP_ReactionMontageEntry* Reaction = ReactionData->FindReaction(ReactionTag))
+	{
+		return Reaction->bCancelActiveAbilityOnCleanHit;
+	}
+
+	if (!ReactionMontage)
+	{
+		return false;
+	}
+
+	for (const FSCP_ReactionMontageEntry& Reaction : ReactionData->Reactions)
+	{
+		if (Reaction.Montage == ReactionMontage)
+		{
+			return Reaction.bCancelActiveAbilityOnCleanHit;
+		}
+	}
+
+	return false;
 }
 
 void USCP_CombatPredictionComponent::ApplyGameplayEffectsFromHit(

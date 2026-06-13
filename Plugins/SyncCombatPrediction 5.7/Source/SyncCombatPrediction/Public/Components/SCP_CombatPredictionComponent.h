@@ -138,6 +138,7 @@ public:
 		FSCP_CombatPredictionContext Context,
 		AActor* TargetActor,
 		UAnimMontage* ReactionMontage,
+		bool bCancelActiveAbilityOnCleanHit,
 		float ServerStartTime);
 
 	UFUNCTION(NetMulticast, Unreliable)
@@ -146,17 +147,19 @@ public:
 		AActor* InstigatorActor,
 		AActor* TargetActor,
 		UAnimMontage* ReactionMontage,
+		bool bCancelActiveAbilityOnCleanHit,
 		float ServerStartTime,
 		FSCP_HitTransformSettings TransformSettings,
 		FSCP_HitDefenseSettings DefenseSettings);
 
 	UFUNCTION(Client, Reliable)
-	void ClientPlayOwnerTargetReaction(UAnimMontage* ReactionMontage);
+	void ClientPlayOwnerTargetReaction(UAnimMontage* ReactionMontage, bool bCancelActiveAbilityOnCleanHit);
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayOwnerTargetReactionWithTransform(
 		AActor* InstigatorActor,
 		UAnimMontage* ReactionMontage,
+		bool bCancelActiveAbilityOnCleanHit,
 		FSCP_HitTransformSettings TransformSettings,
 		FSCP_HitDefenseSettings DefenseSettings);
 
@@ -232,7 +235,10 @@ private:
 		AActor* TargetActor,
 		UAnimMontage* ReactionMontage,
 		float StartPosition,
-		bool bForceRestart) const;
+		bool bForceRestart,
+		bool bCancelActiveAbilityOnCleanHit) const;
+	void CancelTargetAnimatingAbilityForReaction(AActor* TargetActor) const;
+	bool ShouldCancelActiveAbilityForReaction(FGameplayTag ReactionTag, const UAnimMontage* ReactionMontage) const;
 	void ConfirmTargetReaction(
 		FSCP_CombatPredictionContext Context,
 		AActor* TargetActor,
