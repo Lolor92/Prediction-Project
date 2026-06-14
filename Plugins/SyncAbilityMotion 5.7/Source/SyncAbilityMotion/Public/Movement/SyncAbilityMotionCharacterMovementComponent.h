@@ -20,6 +20,7 @@ public:
 	void SetAbilityRootMotionPausedByCharacterImpact(bool bInPaused);
 	bool IsAbilityRootMotionPausedByCharacterImpact() const { return bAbilityRootMotionPausedByCharacterImpact; }
 
+	virtual float GetMaxSpeed() const override;
 	virtual void UpdateFromCompressedFlags(uint8 Flags) override;
 	virtual FVector ScaleInputAcceleration(const FVector& InputAcceleration) const override;
 	virtual class FNetworkPredictionData_Client* GetPredictionData_Client() const override;
@@ -55,4 +56,11 @@ private:
 
 	UPROPERTY(Transient)
 	bool bAbilityRootMotionPausedByCharacterImpact = false;
+
+protected:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Directional Speed", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
+	float BackwardSpeedMultiplier = 0.6f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Directional Speed", meta = (ClampMin = "-1.0", ClampMax = "1.0", UIMin = "-1.0", UIMax = "0.0"))
+	float BackwardDotThreshold = -0.5f;
 };

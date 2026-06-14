@@ -122,7 +122,7 @@ void USyncAbilityMotionAnimInstance::RestoreControllerYawSettings()
 
 void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 {
-	if (!Character || !Character->IsLocallyControlled()) return;
+	if (!Character || (!Character->IsLocallyControlled() && !Character->HasAuthority())) return;
 
 	USyncAbilityMotionComponent* SyncMotion = GetMotionComponentSafe();
 	if (!SyncMotion) return;
@@ -221,10 +221,17 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 		SyncMoveComp->SetAbilityRootMotionPausedByCharacterImpact(false);
 	}
 
+	const bool bShouldPauseByCharacterProbe =
+		!bReleasedRootMotionThisMontage && Ability->ShouldPauseRootMotionForCharacterCollision(Character);
+
 	const bool bPausedByCharacterCollision =
-		!bReleasedRootMotionThisMontage &&
-		(Ability->ShouldPauseRootMotionForCharacterCollision(Character) ||
-			(SyncMoveComp && SyncMoveComp->IsAbilityRootMotionPausedByCharacterImpact()));
+		bShouldPauseByCharacterProbe ||
+		(SyncMoveComp && SyncMoveComp->IsAbilityRootMotionPausedByCharacterImpact());
+
+	if (!bReleasedRootMotionThisMontage && SyncMoveComp)
+	{
+		SyncMoveComp->SetAbilityRootMotionPausedByCharacterImpact(bPausedByCharacterCollision);
+	}
 
 	FSyncAbilityMotionState DesiredState;
 	DesiredState.bCanBlendMontage = bReleaseWasAlreadyReached;

@@ -19,7 +19,7 @@ namespace
 {
 	TAutoConsoleVariable<int32> CVarSyncAbilityMotionMovementDiagnostics(
 		TEXT("sync.AbilityMotion.MovementDiagnostics"),
-		1,
+		0,
 		TEXT("Enable SyncAbilityMotion movement correction/root-motion diagnostic logs."),
 		ECVF_Default);
 
@@ -495,6 +495,29 @@ void USyncAbilityMotionCharacterMovementComponent::ClientAdjustRootMotionSourceP
 		bHasBase,
 		bBaseRelativePosition,
 		ServerMovementMode);
+}
+
+float USyncAbilityMotionCharacterMovementComponent::GetMaxSpeed() const
+{
+	float MaxSpeed = Super::GetMaxSpeed();
+	if (MaxSpeed <= 0.f) return MaxSpeed;
+
+	const APawn* PawnOwnerPtr = PawnOwner;
+	if (!PawnOwnerPtr) return MaxSpeed;
+
+	const FVector CurrentAcceleration = Acceleration.GetSafeNormal2D();
+	if (CurrentAcceleration.IsNearlyZero()) return MaxSpeed;
+
+	const FVector Forward = PawnOwnerPtr->GetActorForwardVector().GetSafeNormal2D();
+	if (Forward.IsNearlyZero()) return MaxSpeed;
+
+	const float ForwardDot = FVector::DotProduct(Forward, CurrentAcceleration);
+	if (ForwardDot <= BackwardDotThreshold)
+	{
+		return MaxSpeed * BackwardSpeedMultiplier;
+	}
+
+	return MaxSpeed;
 }
 
 FVector USyncAbilityMotionCharacterMovementComponent::ScaleInputAcceleration(const FVector& InputAcceleration) const

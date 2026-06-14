@@ -40,6 +40,7 @@ void USyncAbilityMotionComponent::ResetAbilityMotionState()
 		if (USyncAbilityMotionCharacterMovementComponent* MoveComp =
 			Cast<USyncAbilityMotionCharacterMovementComponent>(Character->GetCharacterMovement()))
 		{
+			MoveComp->SetAbilityRootMotionPausedByCharacterImpact(false);
 			MoveComp->SetAbilityRootMotionSuppressed(false);
 			MoveComp->SetAbilityMovementInputSuppressed(false);
 		}
@@ -91,10 +92,14 @@ void USyncAbilityMotionComponent::ApplyAbilityMotionState(const FSyncAbilityMoti
 	USyncAbilityMotionCharacterMovementComponent* MoveComp =
 		Cast<USyncAbilityMotionCharacterMovementComponent>(Character->GetCharacterMovement());
 	const bool bUseMovementComponent =
-		MoveComp && (Character->IsLocallyControlled() || (Character->HasAuthority() && !Character->IsPlayerControlled()));
+		MoveComp && (Character->IsLocallyControlled() || Character->HasAuthority());
 
 	if (bUseMovementComponent)
 	{
+		const bool bPausedByCharacterImpact =
+			!NewState.bRootMotionEnabled && NewState.bMovementInputSuppressed;
+
+		MoveComp->SetAbilityRootMotionPausedByCharacterImpact(bPausedByCharacterImpact);
 		MoveComp->SetAbilityRootMotionSuppressed(!NewState.bRootMotionEnabled);
 		MoveComp->SetAbilityMovementInputSuppressed(NewState.bMovementInputSuppressed);
 		MoveComp->RefreshAbilityRootMotionMode();
