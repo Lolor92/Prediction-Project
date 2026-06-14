@@ -9,6 +9,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "HAL/IConsoleManager.h"
 #include "Modules/ModuleManager.h"
 
@@ -399,4 +400,12 @@ void USyncAbilityMotionGameplayAbility::RotateAvatarToControllerYawOnActivate() 
 	FRotator NewRot = Character->GetActorRotation();
 	NewRot.Yaw = Controller->GetControlRotation().Yaw;
 	Character->SetActorRotation(NewRot, ETeleportType::ResetPhysics);
+
+	if (Character->IsLocallyControlled())
+	{
+		if (USpringArmComponent* SpringArm = Character->FindComponentByClass<USpringArmComponent>())
+		{
+			SpringArm->TickComponent(0.f, LEVELTICK_All, nullptr);
+		}
+	}
 }

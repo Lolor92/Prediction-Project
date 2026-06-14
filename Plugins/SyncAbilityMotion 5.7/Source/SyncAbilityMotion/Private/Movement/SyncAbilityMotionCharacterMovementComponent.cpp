@@ -1,13 +1,80 @@
 #include "Movement/SyncAbilityMotionCharacterMovementComponent.h"
 
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "AnimInstance/SyncAbilityMotionAnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Character.h"
+#include "HAL/IConsoleManager.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogSyncAbilityMotionMoveDiag, Log, All);
 
 namespace SyncAbilityMotionFlags
 {
 	constexpr uint8 SuppressAbilityRootMotion = FSavedMove_Character::FLAG_Custom_0;
 	constexpr uint8 SuppressAbilityMovementInput = FSavedMove_Character::FLAG_Custom_1;
+}
+
+namespace
+{
+	TAutoConsoleVariable<int32> CVarSyncAbilityMotionMovementDiagnostics(
+		TEXT("sync.AbilityMotion.MovementDiagnostics"),
+		1,
+		TEXT("Enable SyncAbilityMotion movement correction/root-motion diagnostic logs."),
+		ECVF_Default);
+
+	bool IsSyncAbilityMotionMovementDiagnosticsEnabled()
+	{
+		return CVarSyncAbilityMotionMovementDiagnostics.GetValueOnGameThread() != 0;
+	}
+
+	const TCHAR* BoolText(const bool bValue)
+	{
+		return bValue ? TEXT("true") : TEXT("false");
+	}
+
+	FString DescribeMontageState(const ACharacter* Character)
+	{
+		const USkeletalMeshComponent* MeshComp = Character ? Character->GetMesh() : nullptr;
+		const UAnimInstance* AnimInstance = MeshComp ? MeshComp->GetAnimInstance() : nullptr;
+		const UAnimMontage* Montage = AnimInstance ? AnimInstance->GetCurrentActiveMontage() : nullptr;
+		const float MontagePosition = Montage ? AnimInstance->Montage_GetPosition(Montage) : -1.f;
+		const float MontageLength = Montage ? Montage->GetPlayLength() : 0.f;
+		const float MontagePercent = MontageLength > UE_KINDA_SMALL_NUMBER
+			? (MontagePosition / MontageLength) * 100.f
+			: -1.f;
+
+		return FString::Printf(
+			TEXT("Montage=%s MontagePos=%.3f MontagePct=%.2f"),
+			*GetNameSafe(Montage),
+			MontagePosition,
+			MontagePercent);
+	}
+
+	FString DescribeMovementState(const USyncAbilityMotionCharacterMovementComponent* MoveComp)
+	{
+		const ACharacter* Character = MoveComp ? Cast<ACharacter>(MoveComp->GetOwner()) : nullptr;
+		const FVector ActorLocation = Character ? Character->GetActorLocation() : FVector::ZeroVector;
+		const FRotator ActorRotation = Character ? Character->GetActorRotation() : FRotator::ZeroRotator;
+
+		return FString::Printf(
+			TEXT("Character=%s Local=%s Authority=%s Loc=%s Rot=%s Vel=%s Accel=%s Mode=%d RootSuppressed=%s InputSuppressed=%s RootPausedImpact=%s HasAnimRootMotion=%s HasRootMotionSources=%s Smoothing=%d %s"),
+			*GetNameSafe(Character),
+			BoolText(Character && Character->IsLocallyControlled()),
+			BoolText(Character && Character->HasAuthority()),
+			*ActorLocation.ToCompactString(),
+			*ActorRotation.ToCompactString(),
+			MoveComp ? *MoveComp->Velocity.ToCompactString() : TEXT("None"),
+			MoveComp ? *MoveComp->GetCurrentAcceleration().ToCompactString() : TEXT("None"),
+			MoveComp ? static_cast<int32>(MoveComp->MovementMode) : -1,
+			BoolText(MoveComp && MoveComp->IsAbilityRootMotionSuppressed()),
+			BoolText(MoveComp && MoveComp->IsAbilityMovementInputSuppressed()),
+			BoolText(MoveComp && MoveComp->IsAbilityRootMotionPausedByCharacterImpact()),
+			BoolText(MoveComp && MoveComp->HasAnimRootMotion()),
+			BoolText(MoveComp && MoveComp->HasRootMotionSources()),
+			MoveComp ? static_cast<int32>(MoveComp->NetworkSmoothingMode) : -1,
+			*DescribeMontageState(Character));
+	}
 }
 
 class FSavedMove_SyncAbilityMotion final : public FSavedMove_Character
@@ -94,6 +161,17 @@ void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionSuppresse
 {
 	if (bAbilityRootMotionSuppressed == bInSuppressed) return;
 
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Log,
+			TEXT("SetAbilityRootMotionSuppressed New=%s Previous=%s %s"),
+			BoolText(bInSuppressed),
+			BoolText(bAbilityRootMotionSuppressed),
+			*DescribeMovementState(this));
+	}
+
 	bAbilityRootMotionSuppressed = bInSuppressed;
 	RefreshAbilityRootMotionMode();
 }
@@ -118,12 +196,36 @@ void USyncAbilityMotionCharacterMovementComponent::RefreshAbilityRootMotionMode(
 
 void USyncAbilityMotionCharacterMovementComponent::SetAbilityMovementInputSuppressed(bool bInSuppressed)
 {
+	if (bAbilityMovementInputSuppressed == bInSuppressed) return;
+
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Log,
+			TEXT("SetAbilityMovementInputSuppressed New=%s Previous=%s %s"),
+			BoolText(bInSuppressed),
+			BoolText(bAbilityMovementInputSuppressed),
+			*DescribeMovementState(this));
+	}
+
 	bAbilityMovementInputSuppressed = bInSuppressed;
 }
 
 void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionPausedByCharacterImpact(bool bInPaused)
 {
 	if (bAbilityRootMotionPausedByCharacterImpact == bInPaused) return;
+
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Log,
+			TEXT("SetAbilityRootMotionPausedByCharacterImpact New=%s Previous=%s %s"),
+			BoolText(bInPaused),
+			BoolText(bAbilityRootMotionPausedByCharacterImpact),
+			*DescribeMovementState(this));
+	}
 
 	bAbilityRootMotionPausedByCharacterImpact = bInPaused;
 }
@@ -157,6 +259,244 @@ FNetworkPredictionData_Client* USyncAbilityMotionCharacterMovementComponent::Get
 	return ClientPredictionData;
 }
 
+void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(
+	const FVector& OldLocation,
+	const FQuat& OldRotation,
+	const FVector& NewLocation,
+	const FQuat& NewRotation)
+{
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("SmoothCorrection Dist=%.2f OldLoc=%s NewLoc=%s OldRot=%s NewRot=%s %s"),
+			FVector::Dist(OldLocation, NewLocation),
+			*OldLocation.ToCompactString(),
+			*NewLocation.ToCompactString(),
+			*OldRotation.Rotator().ToCompactString(),
+			*NewRotation.Rotator().ToCompactString(),
+			*DescribeMovementState(this));
+	}
+
+	Super::SmoothCorrection(OldLocation, OldRotation, NewLocation, NewRotation);
+}
+
+void USyncAbilityMotionCharacterMovementComponent::ServerMoveHandleClientError(
+	float ClientTimeStamp,
+	float DeltaTime,
+	const FVector& Accel,
+	const FVector& RelativeClientLocation,
+	UPrimitiveComponent* ClientMovementBase,
+	FName ClientBaseBoneName,
+	uint8 ClientMovementMode)
+{
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		const FVector ServerLocation = CharacterOwner ? CharacterOwner->GetActorLocation() : FVector::ZeroVector;
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("ServerMoveHandleClientError ClientTime=%.3f DeltaTime=%.3f ClientLoc=%s ServerLoc=%s Dist=%.2f ClientAccel=%s ClientMode=%d Base=%s Bone=%s %s"),
+			ClientTimeStamp,
+			DeltaTime,
+			*RelativeClientLocation.ToCompactString(),
+			*ServerLocation.ToCompactString(),
+			FVector::Dist(RelativeClientLocation, ServerLocation),
+			*Accel.ToCompactString(),
+			static_cast<int32>(ClientMovementMode),
+			*GetNameSafe(ClientMovementBase),
+			*ClientBaseBoneName.ToString(),
+			*DescribeMovementState(this));
+	}
+
+	Super::ServerMoveHandleClientError(
+		ClientTimeStamp,
+		DeltaTime,
+		Accel,
+		RelativeClientLocation,
+		ClientMovementBase,
+		ClientBaseBoneName,
+		ClientMovementMode);
+}
+
+void USyncAbilityMotionCharacterMovementComponent::ClientAdjustPosition_Implementation(
+	float TimeStamp,
+	FVector NewLoc,
+	FVector NewVel,
+	UPrimitiveComponent* NewBase,
+	FName NewBaseBoneName,
+	bool bHasBase,
+	bool bBaseRelativePosition,
+	uint8 ServerMovementMode,
+	TOptional<FRotator> OptionalRotation)
+{
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		const FVector ClientLocation = CharacterOwner ? CharacterOwner->GetActorLocation() : FVector::ZeroVector;
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("ClientAdjustPosition Time=%.3f ClientLoc=%s ServerLoc=%s Dist=%.2f ServerVel=%s ServerMode=%d Base=%s HasBase=%s BaseRelative=%s OptionalRot=%s %s"),
+			TimeStamp,
+			*ClientLocation.ToCompactString(),
+			*NewLoc.ToCompactString(),
+			FVector::Dist(ClientLocation, NewLoc),
+			*NewVel.ToCompactString(),
+			static_cast<int32>(ServerMovementMode),
+			*GetNameSafe(NewBase),
+			BoolText(bHasBase),
+			BoolText(bBaseRelativePosition),
+			OptionalRotation.IsSet() ? *OptionalRotation.GetValue().ToCompactString() : TEXT("None"),
+			*DescribeMovementState(this));
+	}
+
+	Super::ClientAdjustPosition_Implementation(
+		TimeStamp,
+		NewLoc,
+		NewVel,
+		NewBase,
+		NewBaseBoneName,
+		bHasBase,
+		bBaseRelativePosition,
+		ServerMovementMode,
+		OptionalRotation);
+}
+
+void USyncAbilityMotionCharacterMovementComponent::ClientVeryShortAdjustPosition_Implementation(
+	float TimeStamp,
+	FVector NewLoc,
+	UPrimitiveComponent* NewBase,
+	FName NewBaseBoneName,
+	bool bHasBase,
+	bool bBaseRelativePosition,
+	uint8 ServerMovementMode)
+{
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		const FVector ClientLocation = CharacterOwner ? CharacterOwner->GetActorLocation() : FVector::ZeroVector;
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("ClientVeryShortAdjustPosition Time=%.3f ClientLoc=%s ServerLoc=%s Dist=%.2f ServerMode=%d Base=%s HasBase=%s BaseRelative=%s %s"),
+			TimeStamp,
+			*ClientLocation.ToCompactString(),
+			*NewLoc.ToCompactString(),
+			FVector::Dist(ClientLocation, NewLoc),
+			static_cast<int32>(ServerMovementMode),
+			*GetNameSafe(NewBase),
+			BoolText(bHasBase),
+			BoolText(bBaseRelativePosition),
+			*DescribeMovementState(this));
+	}
+
+	Super::ClientVeryShortAdjustPosition_Implementation(
+		TimeStamp,
+		NewLoc,
+		NewBase,
+		NewBaseBoneName,
+		bHasBase,
+		bBaseRelativePosition,
+		ServerMovementMode);
+}
+
+void USyncAbilityMotionCharacterMovementComponent::ClientAdjustRootMotionPosition_Implementation(
+	float TimeStamp,
+	float ServerMontageTrackPosition,
+	FVector ServerLoc,
+	FVector_NetQuantizeNormal ServerRotation,
+	float ServerVelZ,
+	UPrimitiveComponent* ServerBase,
+	FName ServerBoneName,
+	bool bHasBase,
+	bool bBaseRelativePosition,
+	uint8 ServerMovementMode)
+{
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		const FVector ClientLocation = CharacterOwner ? CharacterOwner->GetActorLocation() : FVector::ZeroVector;
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("ClientAdjustRootMotionPosition Time=%.3f ClientLoc=%s ServerLoc=%s Dist=%.2f ServerMontagePos=%.3f ServerRot=%s ServerVelZ=%.2f ServerMode=%d Base=%s HasBase=%s BaseRelative=%s %s"),
+			TimeStamp,
+			*ClientLocation.ToCompactString(),
+			*ServerLoc.ToCompactString(),
+			FVector::Dist(ClientLocation, ServerLoc),
+			ServerMontageTrackPosition,
+			*ServerRotation.ToCompactString(),
+			ServerVelZ,
+			static_cast<int32>(ServerMovementMode),
+			*GetNameSafe(ServerBase),
+			BoolText(bHasBase),
+			BoolText(bBaseRelativePosition),
+			*DescribeMovementState(this));
+	}
+
+	Super::ClientAdjustRootMotionPosition_Implementation(
+		TimeStamp,
+		ServerMontageTrackPosition,
+		ServerLoc,
+		ServerRotation,
+		ServerVelZ,
+		ServerBase,
+		ServerBoneName,
+		bHasBase,
+		bBaseRelativePosition,
+		ServerMovementMode);
+}
+
+void USyncAbilityMotionCharacterMovementComponent::ClientAdjustRootMotionSourcePosition_Implementation(
+	float TimeStamp,
+	FRootMotionSourceGroup ServerRootMotion,
+	bool bHasAnimRootMotion,
+	float ServerMontageTrackPosition,
+	FVector ServerLoc,
+	FVector_NetQuantizeNormal ServerRotation,
+	float ServerVelZ,
+	UPrimitiveComponent* ServerBase,
+	FName ServerBoneName,
+	bool bHasBase,
+	bool bBaseRelativePosition,
+	uint8 ServerMovementMode)
+{
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		const FVector ClientLocation = CharacterOwner ? CharacterOwner->GetActorLocation() : FVector::ZeroVector;
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("ClientAdjustRootMotionSourcePosition Time=%.3f ClientLoc=%s ServerLoc=%s Dist=%.2f HasAnimRootMotion=%s ServerMontagePos=%.3f ServerRot=%s ServerVelZ=%.2f ServerMode=%d Base=%s HasBase=%s BaseRelative=%s %s"),
+			TimeStamp,
+			*ClientLocation.ToCompactString(),
+			*ServerLoc.ToCompactString(),
+			FVector::Dist(ClientLocation, ServerLoc),
+			BoolText(bHasAnimRootMotion),
+			ServerMontageTrackPosition,
+			*ServerRotation.ToCompactString(),
+			ServerVelZ,
+			static_cast<int32>(ServerMovementMode),
+			*GetNameSafe(ServerBase),
+			BoolText(bHasBase),
+			BoolText(bBaseRelativePosition),
+			*DescribeMovementState(this));
+	}
+
+	Super::ClientAdjustRootMotionSourcePosition_Implementation(
+		TimeStamp,
+		ServerRootMotion,
+		bHasAnimRootMotion,
+		ServerMontageTrackPosition,
+		ServerLoc,
+		ServerRotation,
+		ServerVelZ,
+		ServerBase,
+		ServerBoneName,
+		bHasBase,
+		bBaseRelativePosition,
+		ServerMovementMode);
+}
+
 FVector USyncAbilityMotionCharacterMovementComponent::ScaleInputAcceleration(const FVector& InputAcceleration) const
 {
 	if (bAbilityMovementInputSuppressed)
@@ -172,6 +512,21 @@ void USyncAbilityMotionCharacterMovementComponent::HandleImpact(const FHitResult
 {
 	if (Cast<ACharacter>(Hit.GetActor()) && !bAbilityRootMotionSuppressed && bAbilityMovementInputSuppressed)
 	{
+		if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncAbilityMotionMoveDiag,
+				Warning,
+				TEXT("HandleImpact pausing ability root motion HitActor=%s HitComp=%s ImpactPoint=%s Normal=%s MoveDelta=%s TimeSlice=%.3f %s"),
+				*GetNameSafe(Hit.GetActor()),
+				*GetNameSafe(Hit.GetComponent()),
+				*Hit.ImpactPoint.ToCompactString(),
+				*Hit.ImpactNormal.ToCompactString(),
+				*MoveDelta.ToCompactString(),
+				TimeSlice,
+				*DescribeMovementState(this));
+		}
+
 		SetAbilityRootMotionPausedByCharacterImpact(true);
 		SetAbilityRootMotionSuppressed(true);
 	}
