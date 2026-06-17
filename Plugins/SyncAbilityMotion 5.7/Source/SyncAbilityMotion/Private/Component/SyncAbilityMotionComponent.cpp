@@ -77,32 +77,39 @@ void USyncAbilityMotionComponent::OnRep_AbilityMotionState()
 void USyncAbilityMotionComponent::ApplyAbilityMotionState(const FSyncAbilityMotionState& NewState)
 {
 	ACharacter* Character = GetOwnerCharacter();
-	if (!Character) return;
+	if (!Character)
+	{
+		return;
+	}
 
 	USkeletalMeshComponent* MeshComp = Character->GetMesh();
-	if (!MeshComp) return;
+	if (!MeshComp)
+	{
+		return;
+	}
 
-	USyncAbilityMotionAnimInstance* AnimInstance =
-		Cast<USyncAbilityMotionAnimInstance>(MeshComp->GetAnimInstance());
-	if (!AnimInstance) return;
+	USyncAbilityMotionAnimInstance* AnimInstance = Cast<USyncAbilityMotionAnimInstance>(MeshComp->GetAnimInstance());
+	if (!AnimInstance)
+	{
+		return;
+	}
 
 	AnimInstance->bCanBlendMontage = NewState.bCanBlendMontage;
 	AnimInstance->bShouldBlendLowerBody = NewState.bShouldBlendLowerBody;
 
 	USyncAbilityMotionCharacterMovementComponent* MoveComp =
 		Cast<USyncAbilityMotionCharacterMovementComponent>(Character->GetCharacterMovement());
-	const bool bUseMovementComponent =
-		MoveComp && (Character->IsLocallyControlled() || Character->HasAuthority());
 
-	if (bUseMovementComponent)
+	const bool bRootMotionSuppressed = !NewState.bRootMotionEnabled;
+	const bool bPausedByCharacterImpact = bRootMotionSuppressed && NewState.bMovementInputSuppressed;
+
+	if (MoveComp)
 	{
-		const bool bPausedByCharacterImpact =
-			!NewState.bRootMotionEnabled && NewState.bMovementInputSuppressed;
-
 		MoveComp->SetAbilityRootMotionPausedByCharacterImpact(bPausedByCharacterImpact);
-		MoveComp->SetAbilityRootMotionSuppressed(!NewState.bRootMotionEnabled);
+		MoveComp->SetAbilityRootMotionSuppressed(bRootMotionSuppressed);
 		MoveComp->SetAbilityMovementInputSuppressed(NewState.bMovementInputSuppressed);
 		MoveComp->RefreshAbilityRootMotionMode();
+
 		return;
 	}
 
@@ -112,9 +119,10 @@ void USyncAbilityMotionComponent::ApplyAbilityMotionState(const FSyncAbilityMoti
 	}
 
 	AnimInstance->bRootMotionEnabled = NewState.bRootMotionEnabled;
-	AnimInstance->SetRootMotionMode(NewState.bRootMotionEnabled
-		? ERootMotionMode::RootMotionFromMontagesOnly
-		: ERootMotionMode::IgnoreRootMotion);
+	AnimInstance->SetRootMotionMode(
+		NewState.bRootMotionEnabled
+			? ERootMotionMode::RootMotionFromMontagesOnly
+			: ERootMotionMode::IgnoreRootMotion);
 }
 
 ACharacter* USyncAbilityMotionComponent::GetOwnerCharacter() const

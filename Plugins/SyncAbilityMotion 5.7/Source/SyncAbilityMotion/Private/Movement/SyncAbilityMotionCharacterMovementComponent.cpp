@@ -208,8 +208,6 @@ void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionSuppresse
 {
 	if (bAbilityRootMotionSuppressed == bInSuppressed) return;
 
-	const bool bBecameSuppressed = !bAbilityRootMotionSuppressed && bInSuppressed;
-
 	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
 	{
 		UE_LOG(
@@ -222,22 +220,6 @@ void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionSuppresse
 	}
 
 	bAbilityRootMotionSuppressed = bInSuppressed;
-
-	if (bBecameSuppressed)
-	{
-		StopMovementImmediately();
-		ClearAccumulatedForces();
-
-		Acceleration = FVector::ZeroVector;
-		LastUpdateVelocity = FVector::ZeroVector;
-
-		CurrentRootMotion.Clear();
-
-		if (CharacterOwner)
-		{
-			CharacterOwner->ForceNetUpdate();
-		}
-	}
 
 	if (!bInSuppressed)
 	{
