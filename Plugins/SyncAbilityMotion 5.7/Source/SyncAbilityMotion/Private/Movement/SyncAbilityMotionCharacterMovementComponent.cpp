@@ -17,6 +17,7 @@ namespace SyncAbilityMotionFlags
 {
 	constexpr uint8 SuppressAbilityRootMotion = FSavedMove_Character::FLAG_Custom_0;
 	constexpr uint8 SuppressAbilityMovementInput = FSavedMove_Character::FLAG_Custom_1;
+	constexpr uint8 PauseAbilityRootMotion = FSavedMove_Character::FLAG_Custom_2;
 }
 
 namespace
@@ -121,6 +122,7 @@ public:
 
 		bSavedAbilityRootMotionSuppressed = false;
 		bSavedAbilityMovementInputSuppressed = false;
+		bSavedAbilityRootMotionPaused = false;
 	}
 
 	virtual uint8 GetCompressedFlags() const override
@@ -135,6 +137,11 @@ public:
 		if (bSavedAbilityMovementInputSuppressed)
 		{
 			Result |= SyncAbilityMotionFlags::SuppressAbilityMovementInput;
+		}
+
+		if (bSavedAbilityRootMotionPaused)
+		{
+			Result |= SyncAbilityMotionFlags::PauseAbilityRootMotion;
 		}
 
 		return Result;
@@ -155,6 +162,11 @@ public:
 			return false;
 		}
 
+		if (bSavedAbilityRootMotionPaused != NewSyncMove->bSavedAbilityRootMotionPaused)
+		{
+			return false;
+		}
+
 		return Super::CanCombineWith(NewMove, Character, MaxDelta);
 	}
 
@@ -168,12 +180,14 @@ public:
 		{
 			bSavedAbilityRootMotionSuppressed = MoveComp->IsAbilityRootMotionSuppressed();
 			bSavedAbilityMovementInputSuppressed = MoveComp->IsAbilityMovementInputSuppressed();
+			bSavedAbilityRootMotionPaused = MoveComp->IsAbilityRootMotionPausedByCharacterImpact();
 		}
 	}
 
 private:
 	uint8 bSavedAbilityRootMotionSuppressed : 1 = false;
 	uint8 bSavedAbilityMovementInputSuppressed : 1 = false;
+	uint8 bSavedAbilityRootMotionPaused : 1 = false;
 };
 
 class FNetworkPredictionData_Client_SyncAbilityMotion final : public FNetworkPredictionData_Client_Character
@@ -190,9 +204,11 @@ public:
 	}
 };
 
-void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionSuppressed(bool bInSuppressed)
+void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionSuppressed(const bool bInSuppressed)
 {
 	if (bAbilityRootMotionSuppressed == bInSuppressed) return;
+
+	const bool bBecameSuppressed = !bAbilityRootMotionSuppressed && bInSuppressed;
 
 	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
 	{
@@ -206,6 +222,28 @@ void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionSuppresse
 	}
 
 	bAbilityRootMotionSuppressed = bInSuppressed;
+
+	if (bBecameSuppressed)
+	{
+		StopMovementImmediately();
+		ClearAccumulatedForces();
+
+		Acceleration = FVector::ZeroVector;
+		LastUpdateVelocity = FVector::ZeroVector;
+
+		CurrentRootMotion.Clear();
+
+		if (CharacterOwner)
+		{
+			CharacterOwner->ForceNetUpdate();
+		}
+	}
+
+	if (!bInSuppressed)
+	{
+		SetAbilityRootMotionPausedByCharacterImpact(false);
+	}
+
 	RefreshAbilityRootMotionMode();
 }
 
@@ -272,9 +310,11 @@ void USyncAbilityMotionCharacterMovementComponent::UpdateFromCompressedFlags(uin
 	{
 		const bool bNewRootMotionSuppressed = (Flags & SyncAbilityMotionFlags::SuppressAbilityRootMotion) != 0;
 		const bool bNewInputSuppressed = (Flags & SyncAbilityMotionFlags::SuppressAbilityMovementInput) != 0;
+		const bool bNewAbilityRootMotionPaused = (Flags & SyncAbilityMotionFlags::PauseAbilityRootMotion) != 0;
 
 		SetAbilityRootMotionSuppressed(bNewRootMotionSuppressed);
 		SetAbilityMovementInputSuppressed(bNewInputSuppressed);
+		SetAbilityRootMotionPausedByCharacterImpact(bNewAbilityRootMotionPaused);
 	}
 }
 
@@ -298,18 +338,46 @@ void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(
 	const FVector& NewLocation,
 	const FQuat& NewRotation)
 {
+	const float CorrectionDist2D = FVector::Dist2D(OldLocation, NewLocation);
+
 	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
 	{
 		UE_LOG(
 			LogSyncAbilityMotionMoveDiag,
 			Warning,
 			TEXT("SmoothCorrection Dist=%.2f OldLoc=%s NewLoc=%s OldRot=%s NewRot=%s %s"),
-			FVector::Dist(OldLocation, NewLocation),
+			CorrectionDist2D,
 			*OldLocation.ToCompactString(),
 			*NewLocation.ToCompactString(),
 			*OldRotation.Rotator().ToCompactString(),
 			*NewRotation.Rotator().ToCompactString(),
 			*DescribeMovementState(this));
+	}
+
+	const bool bIsSimulatedProxy =
+		CharacterOwner &&
+		!CharacterOwner->IsLocallyControlled() &&
+		!CharacterOwner->HasAuthority();
+
+	const bool bInAbilityStopWindow =
+		bAbilityRootMotionSuppressed ||
+		bAbilityMovementInputSuppressed ||
+		bAbilityRootMotionPausedByCharacterImpact;
+
+	const bool bShouldSnapSmallAbilityCorrection =
+		bIsSimulatedProxy &&
+		bInAbilityStopWindow &&
+		CorrectionDist2D <= AbilityStopCorrectionSnapDistance;
+
+	if (bShouldSnapSmallAbilityCorrection)
+	{
+		const ENetworkSmoothingMode SavedSmoothingMode = NetworkSmoothingMode;
+		NetworkSmoothingMode = ENetworkSmoothingMode::Disabled;
+
+		Super::SmoothCorrection(OldLocation, OldRotation, NewLocation, NewRotation);
+
+		NetworkSmoothingMode = SavedSmoothingMode;
+		return;
 	}
 
 	Super::SmoothCorrection(OldLocation, OldRotation, NewLocation, NewRotation);

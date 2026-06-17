@@ -10,7 +10,7 @@ class SYNCABILITYMOTION_API USyncAbilityMotionCharacterMovementComponent : publi
 	GENERATED_BODY()
 
 public:
-	void SetAbilityRootMotionSuppressed(bool bInSuppressed);
+	void SetAbilityRootMotionSuppressed(const bool bInSuppressed);
 	bool IsAbilityRootMotionSuppressed() const { return bAbilityRootMotionSuppressed; }
 	void RefreshAbilityRootMotionMode();
 
@@ -58,6 +58,9 @@ private:
 	bool bAbilityRootMotionPausedByCharacterImpact = false;
 
 protected:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
+	float AbilityStopCorrectionSnapDistance = 35.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Directional Speed", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
 	float BackwardSpeedMultiplier = 0.6f;
 
