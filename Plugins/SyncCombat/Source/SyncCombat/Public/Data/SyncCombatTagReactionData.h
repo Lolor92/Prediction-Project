@@ -61,6 +61,12 @@ struct FSyncCombatTagReactionBinding
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger")
 	ESyncCombatTagReactionPolicy Policy = ESyncCombatTagReactionPolicy::OnAdd;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger")
+	FGameplayTagContainer RequiredOwnerTags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger")
+	FGameplayTagContainer BlockedOwnerTags;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Ability", meta=(ShowOnlyInnerProperties))
 	FSyncCombatTagReactionAbility Ability;
 

@@ -106,6 +106,7 @@ void USyncInputComponent::InstallForPawn(APawn* Pawn)
 
 void USyncInputComponent::UninstallFromPawn()
 {
+	StopInputSimulation();
 	HeldInputTags.Reset();
 	ClearHeldInputRetry();
 	ClearAllComboChains();
@@ -113,6 +114,7 @@ void USyncInputComponent::UninstallFromPawn()
 	CachedSpringArm = nullptr;
 	CachedCamera = nullptr;
 	DesiredZoomArmLength = 0.f;
+	bZoomInterpolationActive = false;
 	SetComponentTickEnabled(false);
 
 	if (APlayerController* PC = CachedPlayerController.Get())
@@ -178,17 +180,33 @@ void USyncInputComponent::TickComponent(
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	bool bKeepTicking = false;
+
+	if (bInputSimulationRunning && !ActiveSimulatedMoveInput.IsNearlyZero())
+	{
+		Move(FInputActionValue(ActiveSimulatedMoveInput));
+		bKeepTicking = true;
+	}
+
+	if (!bZoomInterpolationActive)
+	{
+		SetComponentTickEnabled(bKeepTicking);
+		return;
+	}
+
 	USpringArmComponent* SpringArm = FindSpringArm();
 	if (!SpringArm)
 	{
-		SetComponentTickEnabled(false);
+		bZoomInterpolationActive = false;
+		SetComponentTickEnabled(bKeepTicking);
 		return;
 	}
 
 	if (ZoomInterpSpeed <= 0.f)
 	{
 		SpringArm->TargetArmLength = DesiredZoomArmLength;
-		SetComponentTickEnabled(false);
+		bZoomInterpolationActive = false;
+		SetComponentTickEnabled(bKeepTicking);
 		return;
 	}
 
@@ -201,8 +219,12 @@ void USyncInputComponent::TickComponent(
 	if (FMath::IsNearlyEqual(SpringArm->TargetArmLength, DesiredZoomArmLength, 1.f))
 	{
 		SpringArm->TargetArmLength = DesiredZoomArmLength;
-		SetComponentTickEnabled(false);
+		bZoomInterpolationActive = false;
+		SetComponentTickEnabled(bKeepTicking);
+		return;
 	}
+
+	SetComponentTickEnabled(true);
 }
 
 void USyncInputComponent::BindActionsFromConfig()
@@ -362,6 +384,36 @@ bool USyncInputComponent::DoesSpecMatchInputTag(const FGameplayAbilitySpec& Spec
 	return InputTag.IsValid() &&
 		(Spec.GetDynamicSpecSourceTags().HasTag(InputTag) ||
 			(Spec.Ability && Spec.Ability->GetAssetTags().HasTag(InputTag)));
+}
+
+bool USyncInputComponent::DoesSpecUseGameplayTag(const FGameplayAbilitySpec& Spec, const FGameplayTag& GameplayTag) const
+{
+	if (!GameplayTag.IsValid() || !Spec.Ability)
+	{
+		return false;
+	}
+
+	if (Spec.GetDynamicSpecSourceTags().HasTag(GameplayTag) ||
+		Spec.Ability->GetAssetTags().HasTag(GameplayTag))
+	{
+		return true;
+	}
+
+	if (UFunction* Function = Spec.Ability->FindFunction(TEXT("DoesAbilityUseGameplayTag")))
+	{
+		struct FDoesAbilityUseGameplayTagParams
+		{
+			FGameplayTag GameplayTag;
+			bool ReturnValue = false;
+		};
+
+		FDoesAbilityUseGameplayTagParams Params;
+		Params.GameplayTag = GameplayTag;
+		Spec.Ability->ProcessEvent(Function, &Params);
+		return Params.ReturnValue;
+	}
+
+	return false;
 }
 
 bool USyncInputComponent::CanLocallyActivateSpec(const FGameplayAbilitySpec& Spec) const
@@ -572,6 +624,45 @@ void USyncInputComponent::RemoveHeldInputTag(FGameplayTag InputTag)
 	HeldInputTags.Remove(InputTag);
 }
 
+void USyncInputComponent::SuppressHeldInputForAbilityTag(FGameplayTag AbilityOrOwnedTag)
+{
+	if (!AbilityOrOwnedTag.IsValid())
+	{
+		return;
+	}
+
+	HeldInputTags.Remove(AbilityOrOwnedTag);
+
+	if (!AbilitySystemComponent)
+	{
+		AbilitySystemComponent = USyncInputFunctionLibrary::GetAbilitySystemComponent(GetOwner());
+	}
+
+	if (AbilitySystemComponent)
+	{
+		for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+		{
+			if (!DoesSpecUseGameplayTag(Spec, AbilityOrOwnedTag))
+			{
+				continue;
+			}
+
+			for (int32 Index = HeldInputTags.Num() - 1; Index >= 0; --Index)
+			{
+				if (DoesSpecMatchInputTag(Spec, HeldInputTags[Index]))
+				{
+					HeldInputTags.RemoveAtSwap(Index);
+				}
+			}
+		}
+	}
+
+	if (HeldInputTags.IsEmpty())
+	{
+		ClearHeldInputRetry();
+	}
+}
+
 void USyncInputComponent::RetryHeldInputActivation()
 {
 	if (!bRetryHeldInputActivation || HeldInputTags.IsEmpty())
@@ -628,6 +719,170 @@ void USyncInputComponent::ClearHeldInputRetry()
 	}
 
 	HeldInputRetryTimerHandle.Invalidate();
+}
+
+void USyncInputComponent::StartInputSimulation(const TArray<FGameplayTag>& InputTags)
+{
+	if (!IsLocallyControlledOwner()) return;
+
+	StopInputSimulation();
+
+	SimulatedInputTags = InputTags;
+	if (SimulatedInputTags.IsEmpty())
+	{
+		SimulatedInputTags = SimulatedInputTagPool;
+	}
+	if (SimulatedInputTags.IsEmpty())
+	{
+		SimulatedInputTags = GetDefaultSimulatedInputTags();
+	}
+
+	SimulatedInputTags.RemoveAll([](const FGameplayTag& Tag)
+	{
+		return !Tag.IsValid() ||
+			Tag.MatchesTagExact(SyncInputTags::Move()) ||
+			Tag.MatchesTagExact(SyncInputTags::Look()) ||
+			Tag.MatchesTagExact(SyncInputTags::Zoom());
+	});
+
+	if (SimulatedInputTags.IsEmpty() && (!bSimulateMovementInput || SimulatedMovementChance <= 0.f))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SyncInput: Input simulation has no tags and movement simulation is disabled."));
+		return;
+	}
+
+	bInputSimulationRunning = true;
+	ScheduleNextSimulatedInput();
+}
+
+void USyncInputComponent::StopInputSimulation()
+{
+	if (ActiveSimulatedInputTag.IsValid())
+	{
+		HandleActionReleased(ActiveSimulatedInputTag);
+		ActiveSimulatedInputTag = FGameplayTag();
+	}
+
+	SetSimulatedMovementHeld(false);
+	ClearSimulatedInputTimers();
+	SimulatedInputTags.Reset();
+	bInputSimulationRunning = false;
+}
+
+void USyncInputComponent::ScheduleNextSimulatedInput()
+{
+	if (!bInputSimulationRunning) return;
+
+	const float MinPause = FMath::Max(0.f, SimulatedInputMinPauseDuration);
+	const float MaxPause = FMath::Max(MinPause, SimulatedInputMaxPauseDuration);
+	const float PauseDuration = FMath::FRandRange(MinPause, MaxPause);
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			SimulatedInputPressTimerHandle,
+			this,
+			&ThisClass::PressRandomSimulatedInput,
+			PauseDuration,
+			false);
+	}
+}
+
+void USyncInputComponent::PressRandomSimulatedInput()
+{
+	if (!bInputSimulationRunning) return;
+
+	const bool bUseMovement =
+		bSimulateMovementInput &&
+		FMath::FRand() <= FMath::Clamp(SimulatedMovementChance, 0.f, 1.f);
+
+	if (bUseMovement || SimulatedInputTags.IsEmpty())
+	{
+		SetSimulatedMovementHeld(true);
+	}
+	else
+	{
+		ActiveSimulatedInputTag = SimulatedInputTags[FMath::RandRange(0, SimulatedInputTags.Num() - 1)];
+		HandleActionPressed(ActiveSimulatedInputTag);
+	}
+
+	const float MinHold = FMath::Max(0.01f, SimulatedInputMinHoldDuration);
+	const float MaxHold = FMath::Max(MinHold, SimulatedInputMaxHoldDuration);
+	const float HoldDuration = FMath::FRandRange(MinHold, MaxHold);
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			SimulatedInputReleaseTimerHandle,
+			this,
+			&ThisClass::ReleaseSimulatedInput,
+			HoldDuration,
+			false);
+	}
+}
+
+void USyncInputComponent::ReleaseSimulatedInput()
+{
+	if (ActiveSimulatedInputTag.IsValid())
+	{
+		HandleActionReleased(ActiveSimulatedInputTag);
+		ActiveSimulatedInputTag = FGameplayTag();
+	}
+
+	SetSimulatedMovementHeld(false);
+	ScheduleNextSimulatedInput();
+}
+
+void USyncInputComponent::SetSimulatedMovementHeld(bool bHeld)
+{
+	if (!bHeld)
+	{
+		ActiveSimulatedMoveInput = FVector2D::ZeroVector;
+		return;
+	}
+
+	static const FVector2D Directions[] =
+	{
+		FVector2D(0.f, 1.f),
+		FVector2D(0.f, -1.f),
+		FVector2D(1.f, 0.f),
+		FVector2D(-1.f, 0.f),
+		FVector2D(1.f, 1.f).GetSafeNormal(),
+		FVector2D(-1.f, 1.f).GetSafeNormal(),
+		FVector2D(1.f, -1.f).GetSafeNormal(),
+		FVector2D(-1.f, -1.f).GetSafeNormal()
+	};
+
+	ActiveSimulatedMoveInput = Directions[FMath::RandRange(0, UE_ARRAY_COUNT(Directions) - 1)];
+	SetComponentTickEnabled(true);
+}
+
+void USyncInputComponent::ClearSimulatedInputTimers()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(SimulatedInputPressTimerHandle);
+		World->GetTimerManager().ClearTimer(SimulatedInputReleaseTimerHandle);
+	}
+
+	SimulatedInputPressTimerHandle.Invalidate();
+	SimulatedInputReleaseTimerHandle.Invalidate();
+}
+
+TArray<FGameplayTag> USyncInputComponent::GetDefaultSimulatedInputTags() const
+{
+	TArray<FGameplayTag> Result;
+	if (!InputConfig) return Result;
+
+	for (const FSyncInputAction& Row : InputConfig->SyncInputActions)
+	{
+		if (Row.InputTag.IsValid())
+		{
+			Result.AddUnique(Row.InputTag);
+		}
+	}
+
+	return Result;
 }
 
 void USyncInputComponent::Move(const FInputActionValue& Value)
@@ -692,6 +947,7 @@ void USyncInputComponent::ApplyZoom()
 
 	ZoomLevel = FMath::Clamp(ZoomLevel, MinZoomLevel, MaxZoomLevel);
 	DesiredZoomArmLength = ZoomLevel * ZoomStepDistance;
+	bZoomInterpolationActive = true;
 	SetComponentTickEnabled(true);
 
 	if (UCameraComponent* Camera = FindCamera())

@@ -58,7 +58,8 @@ enum class ESCP_HitMoveDirection : uint8
 	KeepCurrentDistance UMETA(DisplayName="Keep Current Distance"),
 	MoveCloser UMETA(DisplayName="Move Closer"),
 	MoveAway UMETA(DisplayName="Move Away"),
-	SnapToDistance UMETA(DisplayName="Snap To Distance")
+	SnapToDistance UMETA(DisplayName="Snap To Distance"),
+	Forward UMETA(DisplayName="Forward")
 };
 
 UENUM(BlueprintType)
@@ -75,6 +76,13 @@ enum class ESCP_HitTransformTriggerTiming : uint8
 	OnHit UMETA(DisplayName="On Hit"),
 	OnActivation UMETA(DisplayName="On Activation"),
 	Both UMETA(DisplayName="Both")
+};
+
+UENUM(BlueprintType)
+enum class ESCP_HitMovementApplicationMode : uint8
+{
+	SetActorLocation UMETA(DisplayName="Set Actor Location"),
+	LaunchCharacter UMETA(DisplayName="Launch Character")
 };
 
 UENUM(BlueprintType)
@@ -141,6 +149,22 @@ struct SYNCCOMBATPREDICTION_API FSCP_HitMovementSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement",
 		meta=(EditCondition="MoveDirection != ESCP_HitMoveDirection::None", EditConditionHides))
 	bool bSweep = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement",
+		meta=(EditCondition="MoveDirection != ESCP_HitMoveDirection::None", EditConditionHides))
+	ESCP_HitMovementApplicationMode ApplicationMode = ESCP_HitMovementApplicationMode::SetActorLocation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement",
+		meta=(EditCondition="MoveDirection != ESCP_HitMoveDirection::None && ApplicationMode == ESCP_HitMovementApplicationMode::LaunchCharacter", EditConditionHides, ClampMin="0.01", Units="s"))
+	float LaunchDuration = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement",
+		meta=(EditCondition="MoveDirection != ESCP_HitMoveDirection::None && ApplicationMode == ESCP_HitMovementApplicationMode::LaunchCharacter", EditConditionHides))
+	bool bLaunchOverrideXY = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement",
+		meta=(EditCondition="MoveDirection != ESCP_HitMoveDirection::None && ApplicationMode == ESCP_HitMovementApplicationMode::LaunchCharacter", EditConditionHides))
+	bool bLaunchOverrideZ = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement",
 		meta=(EditCondition="MoveDirection != ESCP_HitMoveDirection::None", EditConditionHides))

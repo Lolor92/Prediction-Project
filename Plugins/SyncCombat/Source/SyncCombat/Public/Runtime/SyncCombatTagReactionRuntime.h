@@ -30,6 +30,7 @@ private:
 	void BindTagReactionEvents();
 	void ClearTagReactionEvents();
 	void OnReactionTagChanged(FGameplayTag Tag, int32 NewCount);
+	bool DoesReactionPassOwnerTagRequirements(const FSyncCombatTagReactionBinding& Binding) const;
 	void CacheAnimBoolBindings();
 	void SetAnimBool(const FSyncCombatAnimBoolBinding& Binding, bool bValue) const;
 	bool IsAnimBoolActive(const FSyncCombatAnimBoolBinding& Binding) const;

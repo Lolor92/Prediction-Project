@@ -79,6 +79,10 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_LeftAlt,        "SyncInput.LeftAlt");
 UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_RightAlt,       "SyncInput.RightAlt");
 UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_LeftCmd,        "SyncInput.LeftCmd");
 UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_RightCmd,       "SyncInput.RightCmd");
+UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_LeftShiftW,     "SyncInput.LeftShiftW");
+UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_LeftShiftA,     "SyncInput.LeftShiftA");
+UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_LeftShiftS,     "SyncInput.LeftShiftS");
+UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_LeftShiftD,     "SyncInput.LeftShiftD");
 // Other common keys
 UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_SpaceBar,       "SyncInput.SpaceBar");
 UE_DEFINE_GAMEPLAY_TAG(TAG_SyncInput_Enter,          "SyncInput.Enter");

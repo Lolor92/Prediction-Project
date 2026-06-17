@@ -9,6 +9,7 @@
 
 class UGameplayAbility;
 class UAnimMontage;
+class UGameplayEffect;
 class USCP_ReactionData;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSCP_PredictedHitSignature, const FSCP_PredictedHit&, Hit);
@@ -49,7 +50,25 @@ struct FSCP_PendingPredictedReaction
 	int32 PredictionEventId = 0;
 };
 
-UCLASS(ClassGroup=(SyncCombatPrediction), meta=(BlueprintSpawnableComponent))
+USTRUCT()
+struct FSCP_RecentOwnerReaction
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TObjectPtr<AActor> InstigatorActor = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<UAnimMontage> ReactionMontage = nullptr;
+
+	UPROPERTY()
+	int32 AbilityPredictionKey = 0;
+
+	UPROPERTY()
+	int32 AbilitySpecHandle = INDEX_NONE;
+};
+
+UCLASS(ClassGroup=(SyncCombatPrediction), meta=(BlueprintSpawnableComponent, DisplayName="SyncCombatPredictionComponent"))
 class SYNCCOMBATPREDICTION_API USCP_CombatPredictionComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -63,17 +82,35 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction")
 	void ClearActivePrediction();
 
+	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction|GAS")
+	void ClearActivePredictionForAbility(const UGameplayAbility* Ability);
+
 	UFUNCTION(BlueprintPure, Category="Sync Combat Prediction")
 	bool HasActivePrediction() const { return bHasActivePrediction; }
 
+	UFUNCTION(BlueprintPure, Category="Sync Combat Prediction")
+	bool IsPredictionContextActive(const FSCP_CombatPredictionContext& Context) const;
+
 	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction|Reaction")
 	bool IsPlayingPredictedTargetReaction() const { return LocalPredictedTargetReactionCount > 0; }
+
+	UFUNCTION(BlueprintPure, Category="Sync Combat Prediction|Reaction")
+	bool IsAbilityActivationSuppressedByReaction() const { return ReactionAbilityActivationSuppressionCount > 0; }
 
 	UFUNCTION(BlueprintPure, Category="Sync Combat Prediction")
 	FSCP_CombatPredictionContext GetActivePredictionContext() const { return ActivePredictionContext; }
 
 	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction")
 	FSCP_CombatPredictionContext BeginPredictionEvent();
+
+	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction|GAS")
+	void ApplyGameplayEffectsToSelf(
+		const TArray<TSubclassOf<UGameplayEffect>>& EffectClasses,
+		float Level = 1.f);
+
+	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction|GAS")
+	void RemoveGameplayEffectsFromSelf(
+		const TArray<TSubclassOf<UGameplayEffect>>& EffectClasses);
 
 	UFUNCTION(BlueprintPure, Category="Sync Combat Prediction")
 	bool HasProcessedTarget(const FSCP_CombatPredictionContext& Context, AActor* TargetActor) const;
@@ -105,6 +142,9 @@ public:
 		const FSCP_HitTransformSettings& TransformSettings,
 		const FSCP_HitDefenseSettings& DefenseSettings,
 		const FSCP_HitDamageDefenseSettings& DamageDefenseSettings);
+
+	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction")
+	void ApplyActivationTransformSettings(const FSCP_HitTransformSettings& TransformSettings);
 
 	UFUNCTION(BlueprintCallable, Category="Sync Combat Prediction|Reaction")
 	bool PredictTargetReaction(const FSCP_PredictedHit& Hit, UAnimMontage* ReactionMontage);
@@ -157,11 +197,15 @@ public:
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayOwnerTargetReactionWithTransform(
+		FSCP_CombatPredictionContext Context,
 		AActor* InstigatorActor,
 		UAnimMontage* ReactionMontage,
 		bool bCancelActiveAbilityOnCleanHit,
 		FSCP_HitTransformSettings TransformSettings,
 		FSCP_HitDefenseSettings DefenseSettings);
+
+	UFUNCTION(Client, Reliable)
+	void ClientCancelActiveAbilitiesWithTag(FGameplayTag AbilityOrOwnedTag);
 
 	UPROPERTY(BlueprintAssignable, Category="Sync Combat Prediction")
 	FSCP_PredictedHitSignature OnPredictedHit;
@@ -181,6 +225,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Sync Combat Prediction|Reaction")
 	bool bAutoConfirmAuthorityReactions = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Sync Combat Prediction|Reaction", meta=(ClampMin="0.0", Units="Seconds"))
+	float CleanHitReactionActivationSuppressionDuration = 0.35f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
 	FGameplayTag BlockingTag;
 
@@ -195,6 +242,24 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense")
 	FGameplayTag SuperArmorTag3;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense|Block")
+	TSubclassOf<UGameplayEffect> AttackerBlockedEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense|Block")
+	TSubclassOf<UGameplayEffect> DefenderBlockedEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense|Dodge")
+	TSubclassOf<UGameplayEffect> AttackerDodgedEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense|Dodge")
+	TSubclassOf<UGameplayEffect> DefenderDodgedEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense|Super Armor")
+	TSubclassOf<UGameplayEffect> AttackerSuperArmoredEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Sync Combat Prediction|Defense|Super Armor")
+	TSubclassOf<UGameplayEffect> DefenderSuperArmoredEffectClass;
 
 private:
 	static constexpr int32 MaxPredictionEventId = 32767;
@@ -216,11 +281,15 @@ private:
 	UPROPERTY(Transient)
 	TArray<FSCP_PendingPredictedReaction> PendingPredictedReactions;
 
+	UPROPERTY(Transient)
+	TArray<FSCP_RecentOwnerReaction> RecentOwnerReactions;
+
 	bool bSavedIgnoreClientMovementErrorChecksAndCorrection = false;
 	bool bSavedServerAcceptClientAuthoritativePosition = false;
 	int32 MovementCorrectionToleranceCount = 0;
 	int32 MovementCorrectionAcceptClientAuthoritativeCount = 0;
 	int32 LocalPredictedTargetReactionCount = 0;
+	int32 ReactionAbilityActivationSuppressionCount = 0;
 
 	int32 AllocatePredictionEventId();
 	void ResetPredictionEvents();
@@ -231,6 +300,14 @@ private:
 		const FSCP_PendingPredictedReaction& Entry,
 		const FSCP_CombatPredictionContext& Context,
 		const AActor* TargetActor) const;
+	bool ConsumeRecentOwnerReaction(
+		const FSCP_CombatPredictionContext& Context,
+		AActor* InstigatorActor,
+		const UAnimMontage* ReactionMontage);
+	void AddRecentOwnerReaction(
+		const FSCP_CombatPredictionContext& Context,
+		AActor* InstigatorActor,
+		UAnimMontage* ReactionMontage);
 	bool PlayReactionMontageOnActor(
 		AActor* TargetActor,
 		UAnimMontage* ReactionMontage,
@@ -247,6 +324,13 @@ private:
 		const FSCP_HitDefenseSettings& DefenseSettings);
 	void ApplyGameplayEffectsFromHit(const FSCP_PredictedHit& Hit);
 	void ApplyReactionDataTargetEffectsFromHit(const FSCP_PredictedHit& Hit);
+	void ApplyDefenseGameplayEffectsFromHit(const FSCP_PredictedHit& Hit) const;
+	void CancelActiveAbilitiesWithTag(AActor* TargetActor, FGameplayTag AbilityOrOwnedTag) const;
+	void ApplyGameplayEffectToActor(
+		AActor* RecipientActor,
+		const TSubclassOf<UGameplayEffect>& GameplayEffectClass,
+		float EffectLevel,
+		const FHitResult* HitResult) const;
 	void ApplyEffectClassesToActor(
 		AActor* TargetActor,
 		const TArray<TSubclassOf<UGameplayEffect>>& EffectClasses,
@@ -262,7 +346,8 @@ private:
 		AActor* InstigatorActor,
 		AActor* TargetActor,
 		const FSCP_HitMovementSettings& MovementSettings,
-		const FSCP_HitDefenseSettings& DefenseSettings) const;
+		const FSCP_HitDefenseSettings& DefenseSettings,
+		ESCP_HitTransformTriggerTiming InvocationTiming = ESCP_HitTransformTriggerTiming::OnHit) const;
 	void ApplyHitRotation(
 		AActor* InstigatorActor,
 		AActor* TargetActor,
@@ -298,12 +383,15 @@ private:
 	bool IsAttackDodged(AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings) const;
 	bool HasRequiredSuperArmor(AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings) const;
 	ESCP_HitSuperArmorLevel GetTargetSuperArmorLevel(AActor* TargetActor) const;
+	bool IsAbilityWithTagActive(AActor* TargetActor, FGameplayTag AbilityOrOwnedTag) const;
 	bool ShouldApplyCleanHitReaction(AActor* InstigatorActor, AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings) const;
 	bool ShouldApplyDamageEffects(AActor* InstigatorActor, AActor* TargetActor, const FSCP_HitDefenseSettings& DefenseSettings,
 		const FSCP_HitDamageDefenseSettings& DamageDefenseSettings) const;
 	static bool IsWithinBlockAngle(const AActor* DefenderActor, const AActor* AttackerActor, float BlockAngleDegrees);
 	void BeginPredictedTargetReaction(float Duration);
 	void EndPredictedTargetReaction();
+	void BeginReactionAbilityActivationSuppression(float Duration);
+	void EndReactionAbilityActivationSuppression();
 	void BeginTargetReactionMovementTolerance(float Duration);
 	void BeginMovementCorrectionTolerance(float Duration, bool bAcceptClientAuthoritativePosition);
 	void EndMovementCorrectionTolerance(bool bAcceptClientAuthoritativePosition);

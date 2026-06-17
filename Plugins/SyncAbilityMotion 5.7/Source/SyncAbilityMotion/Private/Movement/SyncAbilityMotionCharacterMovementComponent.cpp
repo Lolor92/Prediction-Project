@@ -1,10 +1,14 @@
 #include "Movement/SyncAbilityMotionCharacterMovementComponent.h"
 
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
+#include "Ability/SyncAbilityMotionGameplayAbility.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "AnimInstance/SyncAbilityMotionAnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSyncAbilityMotionMoveDiag, Log, All);
@@ -74,6 +78,35 @@ namespace
 			BoolText(MoveComp && MoveComp->HasRootMotionSources()),
 			MoveComp ? static_cast<int32>(MoveComp->NetworkSmoothingMode) : -1,
 			*DescribeMontageState(Character));
+	}
+
+	UAbilitySystemComponent* GetAbilitySystemComponent(ACharacter* Character)
+	{
+		if (!Character)
+		{
+			return nullptr;
+		}
+
+		if (APlayerState* PlayerState = Character->GetPlayerState())
+		{
+			if (UAbilitySystemComponent* ASC =
+				UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(PlayerState))
+			{
+				return ASC;
+			}
+		}
+
+		return UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Character);
+	}
+
+	bool ShouldPauseRootMotionOnCharacterImpact(const USyncAbilityMotionCharacterMovementComponent* MoveComp)
+	{
+		ACharacter* Character = MoveComp ? Cast<ACharacter>(MoveComp->GetOwner()) : nullptr;
+		const UAbilitySystemComponent* ASC = GetAbilitySystemComponent(Character);
+		const UGameplayAbility* AnimatingAbility = ASC ? ASC->GetAnimatingAbility() : nullptr;
+		const USyncAbilityMotionGameplayAbility* Ability =
+			Cast<USyncAbilityMotionGameplayAbility>(AnimatingAbility);
+		return Ability && Ability->ShouldPauseRootMotionOnCharacterImpact();
 	}
 }
 
@@ -533,7 +566,10 @@ FVector USyncAbilityMotionCharacterMovementComponent::ScaleInputAcceleration(con
 void USyncAbilityMotionCharacterMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSlice,
 	const FVector& MoveDelta)
 {
-	if (Cast<ACharacter>(Hit.GetActor()) && !bAbilityRootMotionSuppressed && bAbilityMovementInputSuppressed)
+	if (Cast<ACharacter>(Hit.GetActor())
+		&& !bAbilityRootMotionSuppressed
+		&& bAbilityMovementInputSuppressed
+		&& ShouldPauseRootMotionOnCharacterImpact(this))
 	{
 		if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
 		{

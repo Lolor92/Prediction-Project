@@ -6,10 +6,12 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "BlueprintLibrary/SCP_CombatPredictionBlueprintLibrary.h"
+#include "Components/ActorComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Data/SCP_ReactionData.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
@@ -61,6 +63,68 @@ namespace SyncCombatPrediction
 		}
 
 		return FGameplayTag::RequestGameplayTag(FName(DefaultTagName), false);
+	}
+
+	bool DoesAbilityUseGameplayTag(const UGameplayAbility* Ability, FGameplayTag GameplayTag)
+	{
+		if (!Ability || !GameplayTag.IsValid())
+		{
+			return false;
+		}
+
+		if (Ability->GetAssetTags().HasTag(GameplayTag))
+		{
+			return true;
+		}
+
+		if (UFunction* Function = Ability->FindFunction(TEXT("DoesAbilityUseGameplayTag")))
+		{
+			struct FDoesAbilityUseGameplayTagParams
+			{
+				FGameplayTag GameplayTag;
+				bool ReturnValue = false;
+			};
+
+			FDoesAbilityUseGameplayTagParams Params;
+			Params.GameplayTag = GameplayTag;
+			const_cast<UGameplayAbility*>(Ability)->ProcessEvent(Function, &Params);
+			return Params.ReturnValue;
+		}
+
+		return false;
+	}
+
+	void SuppressHeldInputForAbilityTag(AActor* Actor, FGameplayTag AbilityOrOwnedTag)
+	{
+		if (!Actor || !AbilityOrOwnedTag.IsValid())
+		{
+			return;
+		}
+
+		struct FSuppressHeldInputForAbilityTagParams
+		{
+			FGameplayTag AbilityOrOwnedTag;
+		};
+
+		TArray<UActorComponent*> Components;
+		Actor->GetComponents(Components);
+		for (UActorComponent* Component : Components)
+		{
+			if (!Component)
+			{
+				continue;
+			}
+
+			UFunction* Function = Component->FindFunction(TEXT("SuppressHeldInputForAbilityTag"));
+			if (!Function)
+			{
+				continue;
+			}
+
+			FSuppressHeldInputForAbilityTagParams Params;
+			Params.AbilityOrOwnedTag = AbilityOrOwnedTag;
+			Component->ProcessEvent(Function, &Params);
+		}
 	}
 }
 
@@ -116,11 +180,100 @@ void USCP_CombatPredictionComponent::ClearActivePrediction()
 	ProcessedTargets.Reset();
 }
 
+void USCP_CombatPredictionComponent::ClearActivePredictionForAbility(const UGameplayAbility* Ability)
+{
+	if (!Ability || !bHasActivePrediction)
+	{
+		return;
+	}
+
+	const FSCP_CombatPredictionContext AbilityContext =
+		USCP_CombatPredictionBlueprintLibrary::MakePredictionContextFromAbility(Ability);
+	if (!IsPredictionContextActive(AbilityContext))
+	{
+		return;
+	}
+
+	ClearActivePrediction();
+}
+
+bool USCP_CombatPredictionComponent::IsPredictionContextActive(
+	const FSCP_CombatPredictionContext& Context) const
+{
+	return bHasActivePrediction
+		&& Context.IsValidForPrediction()
+		&& ActivePredictionContext.AbilityPredictionKey == Context.AbilityPredictionKey
+		&& ActivePredictionContext.AbilityPredictionBase == Context.AbilityPredictionBase
+		&& ActivePredictionContext.AbilitySpecHandle == Context.AbilitySpecHandle;
+}
+
 FSCP_CombatPredictionContext USCP_CombatPredictionComponent::BeginPredictionEvent()
 {
 	FSCP_CombatPredictionContext EventContext = ActivePredictionContext;
 	EventContext.PredictionEventId = AllocatePredictionEventId();
 	return EventContext;
+}
+
+void USCP_CombatPredictionComponent::ApplyGameplayEffectsToSelf(
+	const TArray<TSubclassOf<UGameplayEffect>>& EffectClasses,
+	float Level)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || EffectClasses.IsEmpty())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* OwnerASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(OwnerActor);
+	if (!OwnerASC)
+	{
+		return;
+	}
+
+	const UGameplayAbility* AnimatingAbility = OwnerASC->GetAnimatingAbility();
+	const float SourceLevel = AnimatingAbility
+		? AnimatingAbility->GetAbilityLevel()
+		: FMath::Max(Level, 1.f);
+
+	FGameplayEffectContextHandle EffectContext = OwnerASC->MakeEffectContext();
+	EffectContext.AddSourceObject(this);
+	EffectContext.AddInstigator(OwnerActor, OwnerActor);
+
+	ApplyEffectClassesToActor(
+		OwnerActor,
+		EffectClasses,
+		SourceLevel,
+		EffectContext);
+}
+
+void USCP_CombatPredictionComponent::RemoveGameplayEffectsFromSelf(
+	const TArray<TSubclassOf<UGameplayEffect>>& EffectClasses)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || EffectClasses.IsEmpty())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* OwnerASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(OwnerActor);
+	if (!OwnerASC)
+	{
+		return;
+	}
+
+	for (const TSubclassOf<UGameplayEffect>& EffectClass : EffectClasses)
+	{
+		if (!EffectClass)
+		{
+			continue;
+		}
+
+		FGameplayEffectQuery Query;
+		Query.EffectDefinition = EffectClass;
+		OwnerASC->RemoveActiveEffects(Query);
+	}
 }
 
 bool USCP_CombatPredictionComponent::HasProcessedTarget(
@@ -278,6 +431,7 @@ bool USCP_CombatPredictionComponent::ReportHitWithSettings(
 	{
 		OnAuthorityHit.Broadcast(Hit);
 		ApplyGameplayEffectsFromHit(Hit);
+		ApplyDefenseGameplayEffectsFromHit(Hit);
 		ApplyReactionDataTargetEffectsFromHit(Hit);
 
 		if (bAutoConfirmAuthorityReactions && ReactionData)
@@ -562,6 +716,7 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 
 		TargetPredictionComponent->BeginTargetReactionMovementTolerance(ToleranceDuration);
 		TargetPredictionComponent->ClientPlayOwnerTargetReactionWithTransform(
+			Context,
 			GetOwner(),
 			bShouldApplyCleanReaction ? ReactionMontage : nullptr,
 			bShouldApplyCleanReaction && ShouldCancelActiveAbilityForReaction(FGameplayTag(), ReactionMontage),
@@ -721,6 +876,7 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReaction_Implementatio
 	bool bCancelActiveAbilityOnCleanHit)
 {
 	ClientPlayOwnerTargetReactionWithTransform_Implementation(
+		FSCP_CombatPredictionContext(),
 		nullptr,
 		ReactionMontage,
 		bCancelActiveAbilityOnCleanHit,
@@ -729,6 +885,7 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReaction_Implementatio
 }
 
 void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_Implementation(
+	FSCP_CombatPredictionContext Context,
 	AActor* InstigatorActor,
 	UAnimMontage* ReactionMontage,
 	bool bCancelActiveAbilityOnCleanHit,
@@ -752,6 +909,30 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_
 	ApplyHitTransformEffects(InstigatorActor, GetOwner(), TransformSettings, DefenseSettings);
 	if (ReactionMontage)
 	{
+		if (ConsumeRecentOwnerReaction(Context, InstigatorActor, ReactionMontage))
+		{
+			if (SyncCombatPrediction::IsDiagnosticsEnabled())
+			{
+				UE_LOG(
+					LogSyncCombatPrediction,
+					Log,
+					TEXT("ClientOwnerReaction duplicate skipped Owner={%s} Instigator={%s} Montage=%s Context={%s}"),
+					*BuildActorDebugString(GetOwner()),
+					*BuildActorDebugString(InstigatorActor),
+					*GetNameSafe(ReactionMontage),
+					*Context.ToDebugString());
+			}
+			return;
+		}
+
+		AddRecentOwnerReaction(Context, InstigatorActor, ReactionMontage);
+
+		if (BlockingTag.IsValid())
+		{
+			SyncCombatPrediction::SuppressHeldInputForAbilityTag(GetOwner(), BlockingTag);
+			CancelActiveAbilitiesWithTag(GetOwner(), BlockingTag);
+		}
+
 		const bool bPlayed = PlayReactionMontageOnActor(
 			GetOwner(),
 			ReactionMontage,
@@ -763,11 +944,12 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_
 			UE_LOG(
 				LogSyncCombatPrediction,
 				Log,
-				TEXT("ClientOwnerReaction played Owner={%s} Instigator={%s} Montage=%s Played=%s"),
+				TEXT("ClientOwnerReaction played Owner={%s} Instigator={%s} Montage=%s Played=%s Context={%s}"),
 				*BuildActorDebugString(GetOwner()),
 				*BuildActorDebugString(InstigatorActor),
 				*GetNameSafe(ReactionMontage),
-				bPlayed ? TEXT("true") : TEXT("false"));
+				bPlayed ? TEXT("true") : TEXT("false"),
+				*Context.ToDebugString());
 		}
 	}
 	else if (SyncCombatPrediction::IsDiagnosticsEnabled())
@@ -779,6 +961,13 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_
 			*BuildActorDebugString(GetOwner()),
 			*BuildActorDebugString(InstigatorActor));
 	}
+}
+
+void USCP_CombatPredictionComponent::ClientCancelActiveAbilitiesWithTag_Implementation(
+	FGameplayTag AbilityOrOwnedTag)
+{
+	SyncCombatPrediction::SuppressHeldInputForAbilityTag(GetOwner(), AbilityOrOwnedTag);
+	CancelActiveAbilitiesWithTag(GetOwner(), AbilityOrOwnedTag);
 }
 
 int32 USCP_CombatPredictionComponent::AllocatePredictionEventId()
@@ -893,6 +1082,56 @@ bool USCP_CombatPredictionComponent::DoesReactionKeyMatch(
 		Entry.PredictionEventId == Context.PredictionEventId;
 }
 
+bool USCP_CombatPredictionComponent::ConsumeRecentOwnerReaction(
+	const FSCP_CombatPredictionContext& Context,
+	AActor* InstigatorActor,
+	const UAnimMontage* ReactionMontage)
+{
+	if (!Context.IsValidForPrediction() || !ReactionMontage)
+	{
+		return false;
+	}
+
+	for (const FSCP_RecentOwnerReaction& Entry : RecentOwnerReactions)
+	{
+		if (Entry.InstigatorActor == InstigatorActor &&
+			Entry.ReactionMontage == ReactionMontage &&
+			Entry.AbilityPredictionKey == Context.AbilityPredictionKey &&
+			Entry.AbilitySpecHandle == Context.AbilitySpecHandle)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void USCP_CombatPredictionComponent::AddRecentOwnerReaction(
+	const FSCP_CombatPredictionContext& Context,
+	AActor* InstigatorActor,
+	UAnimMontage* ReactionMontage)
+{
+	if (!Context.IsValidForPrediction() || !ReactionMontage)
+	{
+		return;
+	}
+
+	FSCP_RecentOwnerReaction Entry;
+	Entry.InstigatorActor = InstigatorActor;
+	Entry.ReactionMontage = ReactionMontage;
+	Entry.AbilityPredictionKey = Context.AbilityPredictionKey;
+	Entry.AbilitySpecHandle = Context.AbilitySpecHandle;
+
+	RecentOwnerReactions.Add(Entry);
+	if (RecentOwnerReactions.Num() > MaxPendingReactions)
+	{
+		RecentOwnerReactions.RemoveAt(
+			0,
+			RecentOwnerReactions.Num() - MaxPendingReactions,
+			EAllowShrinking::No);
+	}
+}
+
 bool USCP_CombatPredictionComponent::PlayReactionMontageOnActor(
 	AActor* TargetActor,
 	UAnimMontage* ReactionMontage,
@@ -991,6 +1230,22 @@ bool USCP_CombatPredictionComponent::PlayReactionMontageOnActor(
 		EMontagePlayReturnType::MontageLength,
 		StartPosition);
 
+	if (PlayResult > 0.f && bCancelActiveAbilityOnCleanHit)
+	{
+		if (USCP_CombatPredictionComponent* TargetPredictionComponent =
+			TargetActor->FindComponentByClass<USCP_CombatPredictionComponent>())
+		{
+			const float RemainingMontageDuration = FMath::Max(
+				ReactionMontage->GetPlayLength() - StartPosition,
+				0.01f);
+			const float SuppressionDuration = FMath::Max(
+				TargetPredictionComponent->CleanHitReactionActivationSuppressionDuration,
+				RemainingMontageDuration + ReactionMontage->GetDefaultBlendOutTime());
+			TargetPredictionComponent->BeginReactionAbilityActivationSuppression(
+				SuppressionDuration);
+		}
+	}
+
 	if (SyncCombatPrediction::IsDiagnosticsEnabled() && PlayResult <= 0.f)
 	{
 		UE_LOG(
@@ -1063,7 +1318,7 @@ void USCP_CombatPredictionComponent::ApplyGameplayEffectsFromHit(
 		return;
 	}
 
-	if (!Hit.GameplayEffects.HasAnyEffects())
+	if (!Hit.GameplayEffects.HasAnyHitEffects())
 	{
 		return;
 	}
@@ -1083,12 +1338,6 @@ void USCP_CombatPredictionComponent::ApplyGameplayEffectsFromHit(
 	EffectContext.AddInstigator(Hit.InstigatorActor, GetOwner());
 	EffectContext.AddHitResult(Hit.HitResult);
 	EffectContext.AddOrigin(Hit.HitResult.ImpactPoint);
-
-	ApplyEffectClassesToActor(
-		Hit.InstigatorActor,
-		Hit.GameplayEffects.ActivationSelfEffects,
-		SourceLevel,
-		EffectContext);
 
 	const bool bShouldApplyCleanReaction = ShouldApplyCleanHitReaction(
 		Hit.InstigatorActor,
@@ -1161,6 +1410,184 @@ void USCP_CombatPredictionComponent::ApplyReactionDataTargetEffectsFromHit(
 		Reaction->TargetEffects,
 		SourceLevel,
 		EffectContext);
+}
+
+void USCP_CombatPredictionComponent::ApplyDefenseGameplayEffectsFromHit(
+	const FSCP_PredictedHit& Hit) const
+{
+	if (!Hit.bIsAuthority || !Hit.TargetActor || !Hit.InstigatorActor)
+	{
+		return;
+	}
+
+	const bool bWasBlocked = IsAttackBlocked(Hit.InstigatorActor, Hit.TargetActor, Hit.DefenseSettings);
+	const bool bWasDodged = IsAttackDodged(Hit.TargetActor, Hit.DefenseSettings);
+	const bool bHasSuperArmor = HasRequiredSuperArmor(Hit.TargetActor, Hit.DefenseSettings);
+	const bool bWasCleanHit = !bWasBlocked && !bWasDodged && !bHasSuperArmor;
+	const UAbilitySystemComponent* TargetASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(Hit.TargetActor);
+	const bool bTargetWasTryingToBlock =
+		BlockingTag.IsValid() &&
+		((TargetASC && TargetASC->HasMatchingGameplayTag(BlockingTag)) ||
+			IsAbilityWithTagActive(Hit.TargetActor, BlockingTag));
+
+	if (bWasBlocked)
+	{
+		ApplyGameplayEffectToActor(
+			Hit.InstigatorActor,
+			AttackerBlockedEffectClass,
+			1.f,
+			&Hit.HitResult);
+		ApplyGameplayEffectToActor(
+			Hit.TargetActor,
+			DefenderBlockedEffectClass,
+			1.f,
+			&Hit.HitResult);
+	}
+	else if (bTargetWasTryingToBlock)
+	{
+		CancelActiveAbilitiesWithTag(Hit.TargetActor, BlockingTag);
+		if (USCP_CombatPredictionComponent* TargetPredictionComponent =
+			Hit.TargetActor->FindComponentByClass<USCP_CombatPredictionComponent>())
+		{
+			TargetPredictionComponent->ClientCancelActiveAbilitiesWithTag(BlockingTag);
+		}
+	}
+	else if (bWasCleanHit && BlockingTag.IsValid())
+	{
+		CancelActiveAbilitiesWithTag(Hit.TargetActor, BlockingTag);
+		if (USCP_CombatPredictionComponent* TargetPredictionComponent =
+			Hit.TargetActor->FindComponentByClass<USCP_CombatPredictionComponent>())
+		{
+			TargetPredictionComponent->ClientCancelActiveAbilitiesWithTag(BlockingTag);
+		}
+
+		if (UWorld* World = GetWorld())
+		{
+			TWeakObjectPtr<USCP_CombatPredictionComponent> WeakThis(const_cast<USCP_CombatPredictionComponent*>(this));
+			TWeakObjectPtr<AActor> WeakTarget(Hit.TargetActor);
+			const FGameplayTag BlockingTagCopy = BlockingTag;
+			World->GetTimerManager().SetTimerForNextTick(
+				FTimerDelegate::CreateLambda([WeakThis, WeakTarget, BlockingTagCopy]()
+				{
+					USCP_CombatPredictionComponent* PredictionComponent = WeakThis.Get();
+					AActor* TargetActor = WeakTarget.Get();
+					if (PredictionComponent && TargetActor)
+					{
+						PredictionComponent->CancelActiveAbilitiesWithTag(TargetActor, BlockingTagCopy);
+					}
+				}));
+		}
+	}
+
+	if (bWasDodged)
+	{
+		ApplyGameplayEffectToActor(
+			Hit.InstigatorActor,
+			AttackerDodgedEffectClass,
+			1.f,
+			&Hit.HitResult);
+		ApplyGameplayEffectToActor(
+			Hit.TargetActor,
+			DefenderDodgedEffectClass,
+			1.f,
+			&Hit.HitResult);
+	}
+
+	if (bHasSuperArmor)
+	{
+		ApplyGameplayEffectToActor(
+			Hit.InstigatorActor,
+			AttackerSuperArmoredEffectClass,
+			1.f,
+			&Hit.HitResult);
+		ApplyGameplayEffectToActor(
+			Hit.TargetActor,
+			DefenderSuperArmoredEffectClass,
+			1.f,
+			&Hit.HitResult);
+	}
+}
+
+void USCP_CombatPredictionComponent::CancelActiveAbilitiesWithTag(
+	AActor* TargetActor,
+	FGameplayTag AbilityOrOwnedTag) const
+{
+	if (!TargetActor || !AbilityOrOwnedTag.IsValid())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* TargetASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(TargetActor);
+	if (!TargetASC)
+	{
+		return;
+	}
+
+	TArray<FGameplayAbilitySpecHandle> HandlesToCancel;
+	for (const FGameplayAbilitySpec& Spec : TargetASC->GetActivatableAbilities())
+	{
+		if (!Spec.IsActive() || !Spec.Ability)
+		{
+			continue;
+		}
+
+		const bool bMatchesTag =
+			SyncCombatPrediction::DoesAbilityUseGameplayTag(Spec.Ability, AbilityOrOwnedTag) ||
+			Spec.GetDynamicSpecSourceTags().HasTag(AbilityOrOwnedTag);
+
+		if (bMatchesTag)
+		{
+			HandlesToCancel.Add(Spec.Handle);
+		}
+	}
+
+	for (const FGameplayAbilitySpecHandle& Handle : HandlesToCancel)
+	{
+		TargetASC->CancelAbilityHandle(Handle);
+	}
+}
+
+void USCP_CombatPredictionComponent::ApplyGameplayEffectToActor(
+	AActor* RecipientActor,
+	const TSubclassOf<UGameplayEffect>& GameplayEffectClass,
+	float EffectLevel,
+	const FHitResult* HitResult) const
+{
+	if (!RecipientActor || !GameplayEffectClass)
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* RecipientASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(RecipientActor);
+	if (!RecipientASC)
+	{
+		return;
+	}
+
+	FGameplayEffectContextHandle EffectContext = RecipientASC->MakeEffectContext();
+	EffectContext.AddSourceObject(GetOwner() ? static_cast<const UObject*>(GetOwner()) : static_cast<const UObject*>(this));
+
+	if (AActor* OwnerActor = GetOwner())
+	{
+		EffectContext.AddInstigator(OwnerActor, OwnerActor);
+	}
+
+	if (HitResult)
+	{
+		EffectContext.AddHitResult(*HitResult);
+	}
+
+	const FGameplayEffectSpecHandle SpecHandle =
+		RecipientASC->MakeOutgoingSpec(GameplayEffectClass, EffectLevel, EffectContext);
+	if (!SpecHandle.IsValid())
+	{
+		return;
+	}
+
+	RecipientASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
 }
 
 void USCP_CombatPredictionComponent::ApplyEffectClassesToActor(
@@ -1245,11 +1672,31 @@ void USCP_CombatPredictionComponent::ApplyHitTransformEffects(
 	ApplyHitMovement(InstigatorActor, TargetActor, TransformSettings.MovementSettings, DefenseSettings);
 }
 
+void USCP_CombatPredictionComponent::ApplyActivationTransformSettings(
+	const FSCP_HitTransformSettings& TransformSettings)
+{
+	AActor* const OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		return;
+	}
+
+	FSCP_HitDefenseSettings DefenseSettings;
+	DefenseSettings.BlockSettings.bAllowMovementWhenBlocked = true;
+	ApplyHitMovement(
+		OwnerActor,
+		OwnerActor,
+		TransformSettings.MovementSettings,
+		DefenseSettings,
+		ESCP_HitTransformTriggerTiming::OnActivation);
+}
+
 void USCP_CombatPredictionComponent::ApplyHitMovement(
 	AActor* InstigatorActor,
 	AActor* TargetActor,
 	const FSCP_HitMovementSettings& MovementSettings,
-	const FSCP_HitDefenseSettings& DefenseSettings) const
+	const FSCP_HitDefenseSettings& DefenseSettings,
+	const ESCP_HitTransformTriggerTiming InvocationTiming) const
 {
 	if (MovementSettings.MoveDirection == ESCP_HitMoveDirection::None)
 	{
@@ -1262,13 +1709,15 @@ void USCP_CombatPredictionComponent::ApplyHitMovement(
 		return;
 	}
 
-	if (!DoesTransformTimingMatch(MovementSettings.TriggerTiming, ESCP_HitTransformTriggerTiming::OnHit))
+	if (!DoesTransformTimingMatch(MovementSettings.TriggerTiming, InvocationTiming))
 	{
 		return;
 	}
 
-	const bool bWasBlocked = IsAttackBlocked(InstigatorActor, TargetActor, DefenseSettings);
-	if (IsAttackDodged(TargetActor, DefenseSettings) || HasRequiredSuperArmor(TargetActor, DefenseSettings))
+	const bool bIsActivationMove = InvocationTiming == ESCP_HitTransformTriggerTiming::OnActivation;
+	const bool bWasBlocked = !bIsActivationMove && IsAttackBlocked(InstigatorActor, TargetActor, DefenseSettings);
+	if (!bIsActivationMove
+		&& (IsAttackDodged(TargetActor, DefenseSettings) || HasRequiredSuperArmor(TargetActor, DefenseSettings)))
 	{
 		return;
 	}
@@ -1278,18 +1727,21 @@ void USCP_CombatPredictionComponent::ApplyHitMovement(
 		return;
 	}
 
-	AActor* const ReferenceActor = ResolveTransformReferenceActor(
-		MovementSettings.ReferenceActorSource,
-		InstigatorActor,
-		TargetActor);
-	if (!ReferenceActor)
+	const bool bUsesRecipientSpace = MovementSettings.MoveDirection == ESCP_HitMoveDirection::Forward;
+	AActor* const ReferenceActor = bUsesRecipientSpace
+		? nullptr
+		: ResolveTransformReferenceActor(
+			MovementSettings.ReferenceActorSource,
+			InstigatorActor,
+			TargetActor);
+	if (!bUsesRecipientSpace && !ReferenceActor)
 	{
 		return;
 	}
 
-	auto ApplyToRecipient = [this, &MovementSettings, ReferenceActor](AActor* RecipientActor)
+	auto ApplyToRecipient = [this, &MovementSettings, ReferenceActor, bUsesRecipientSpace](AActor* RecipientActor)
 	{
-		if (!RecipientActor || RecipientActor == ReferenceActor)
+		if (!RecipientActor || (!bUsesRecipientSpace && RecipientActor == ReferenceActor))
 		{
 			return;
 		}
@@ -1400,6 +1852,28 @@ void USCP_CombatPredictionComponent::ApplyMovementToActor(
 		return;
 	}
 
+	if (MovementSettings.ApplicationMode == ESCP_HitMovementApplicationMode::LaunchCharacter)
+	{
+		ACharacter* const Character = Cast<ACharacter>(RecipientActor);
+		if (!Character || !Character->GetCharacterMovement())
+		{
+			return;
+		}
+
+		const float Duration = FMath::Max(MovementSettings.LaunchDuration, 0.01f);
+		FVector LaunchVelocity = (NewLocation - RecipientActor->GetActorLocation()) / Duration;
+		if (!MovementSettings.bLaunchOverrideZ)
+		{
+			LaunchVelocity.Z = Character->GetCharacterMovement()->Velocity.Z;
+		}
+
+		Character->LaunchCharacter(
+			LaunchVelocity,
+			MovementSettings.bLaunchOverrideXY,
+			MovementSettings.bLaunchOverrideZ);
+		return;
+	}
+
 	RecipientActor->SetActorLocation(
 		NewLocation,
 		MovementSettings.bSweep,
@@ -1429,13 +1903,57 @@ bool USCP_CombatPredictionComponent::CalculateMovementTargetLocation(
 	const FSCP_HitMovementSettings& MovementSettings,
 	FVector& OutLocation) const
 {
-	if (!RecipientActor || !ReferenceActor)
+	if (!RecipientActor)
+	{
+		return false;
+	}
+
+	const FVector RecipientLocation = RecipientActor->GetActorLocation();
+
+	if (MovementSettings.MoveDirection == ESCP_HitMoveDirection::Forward)
+	{
+		FVector RecipientForward = RecipientActor->GetActorForwardVector();
+		RecipientForward.Z = 0.f;
+		RecipientForward = RecipientForward.GetSafeNormal();
+		if (RecipientForward.IsNearlyZero())
+		{
+			return false;
+		}
+
+		FVector RecipientRight = RecipientActor->GetActorRightVector();
+		RecipientRight.Z = 0.f;
+		RecipientRight = RecipientRight.GetSafeNormal();
+		if (RecipientRight.IsNearlyZero())
+		{
+			RecipientRight = FVector::CrossProduct(FVector::UpVector, RecipientForward).GetSafeNormal();
+		}
+
+		float TargetLateralOffset = 0.f;
+		switch (MovementSettings.LateralOffsetMode)
+		{
+		case ESCP_HitLateralOffsetMode::AddOffset:
+		case ESCP_HitLateralOffsetMode::SnapToOffset:
+			TargetLateralOffset = MovementSettings.LateralOffset;
+			break;
+
+		case ESCP_HitLateralOffsetMode::KeepCurrent:
+		default:
+			break;
+		}
+
+		OutLocation = RecipientLocation
+			+ (RecipientForward * MovementSettings.MoveDistance)
+			+ (RecipientRight * TargetLateralOffset);
+		OutLocation.Z = RecipientLocation.Z;
+		return !OutLocation.Equals(RecipientLocation);
+	}
+
+	if (!ReferenceActor)
 	{
 		return false;
 	}
 
 	const FVector ReferenceLocation = ReferenceActor->GetActorLocation();
-	const FVector RecipientLocation = RecipientActor->GetActorLocation();
 
 	FVector ReferenceForward = ReferenceActor->GetActorForwardVector();
 	ReferenceForward.Z = 0.f;
@@ -1696,6 +2214,42 @@ ESCP_HitSuperArmorLevel USCP_CombatPredictionComponent::GetTargetSuperArmorLevel
 	return ESCP_HitSuperArmorLevel::None;
 }
 
+bool USCP_CombatPredictionComponent::IsAbilityWithTagActive(
+	AActor* TargetActor,
+	FGameplayTag AbilityOrOwnedTag) const
+{
+	if (!TargetActor || !AbilityOrOwnedTag.IsValid())
+	{
+		return false;
+	}
+
+	UAbilitySystemComponent* TargetASC =
+		SyncCombatPrediction::GetAbilitySystemComponent(TargetActor);
+	if (!TargetASC)
+	{
+		return false;
+	}
+
+	for (const FGameplayAbilitySpec& Spec : TargetASC->GetActivatableAbilities())
+	{
+		if (!Spec.IsActive() || !Spec.Ability)
+		{
+			continue;
+		}
+
+		const bool bMatchesTag =
+			SyncCombatPrediction::DoesAbilityUseGameplayTag(Spec.Ability, AbilityOrOwnedTag) ||
+			Spec.GetDynamicSpecSourceTags().HasTag(AbilityOrOwnedTag);
+
+		if (bMatchesTag)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool USCP_CombatPredictionComponent::ShouldApplyCleanHitReaction(
 	AActor* InstigatorActor,
 	AActor* TargetActor,
@@ -1786,6 +2340,37 @@ void USCP_CombatPredictionComponent::EndPredictedTargetReaction()
 	}
 
 	--LocalPredictedTargetReactionCount;
+}
+
+void USCP_CombatPredictionComponent::BeginReactionAbilityActivationSuppression(float Duration)
+{
+	UWorld* World = GetWorld();
+	if (!World || Duration <= 0.f)
+	{
+		return;
+	}
+
+	++ReactionAbilityActivationSuppressionCount;
+
+	FTimerHandle TimerHandle;
+	World->GetTimerManager().SetTimer(
+		TimerHandle,
+		FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			EndReactionAbilityActivationSuppression();
+		}),
+		FMath::Max(Duration, 0.01f),
+		false);
+}
+
+void USCP_CombatPredictionComponent::EndReactionAbilityActivationSuppression()
+{
+	if (ReactionAbilityActivationSuppressionCount <= 0)
+	{
+		return;
+	}
+
+	--ReactionAbilityActivationSuppressionCount;
 }
 
 void USCP_CombatPredictionComponent::BeginTargetReactionMovementTolerance(float Duration)

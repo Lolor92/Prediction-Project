@@ -3,9 +3,12 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Component/SyncAbilityMotionComponent.h"
+#include "Components/ActorComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
+#include "GameplayEffect.h"
+#include "GameplayEffectTypes.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -26,6 +29,45 @@ namespace
 	bool IsSyncAbilityMotionAbilityDiagnosticsEnabled()
 	{
 		return CVarSyncAbilityMotionAbilityDiagnostics.GetValueOnGameThread() != 0;
+	}
+
+	bool IsAbilityActivationSuppressedByAvatarComponent(const FGameplayAbilityActorInfo* ActorInfo)
+	{
+		AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
+		if (!Avatar)
+		{
+			return false;
+		}
+
+		struct FIsAbilityActivationSuppressedByReactionParams
+		{
+			bool ReturnValue = false;
+		};
+
+		TArray<UActorComponent*> Components;
+		Avatar->GetComponents(Components);
+		for (UActorComponent* Component : Components)
+		{
+			if (!Component)
+			{
+				continue;
+			}
+
+			UFunction* Function = Component->FindFunction(TEXT("IsAbilityActivationSuppressedByReaction"));
+			if (!Function)
+			{
+				continue;
+			}
+
+			FIsAbilityActivationSuppressedByReactionParams Params;
+			Component->ProcessEvent(Function, &Params);
+			if (Params.ReturnValue)
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 }
 
@@ -66,6 +108,8 @@ void USyncAbilityMotionGameplayAbility::ActivateAbility(const FGameplayAbilitySp
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 	InterruptOtherActiveAbilities();
 	RotateAvatarToControllerYawOnActivate();
+	ResetGameplayEffectWindows();
+	ScheduleGameplayEffectWindowUpdate();
 	OpenComboWindow();
 }
 
@@ -101,6 +145,8 @@ void USyncAbilityMotionGameplayAbility::EndAbility(const FGameplayAbilitySpecHan
 		}
 	}
 
+	CleanupActiveGameplayEffectWindows();
+	ClearGameplayEffectWindowUpdate();
 	ResetComboWindow();
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
@@ -127,7 +173,30 @@ bool USyncAbilityMotionGameplayAbility::CanActivateAbility(const FGameplayAbilit
 		return false;
 	}
 
+	if (!bBypassReactionActivationSuppression && IsAbilityActivationSuppressedByAvatarComponent(ActorInfo))
+	{
+		if (IsSyncAbilityMotionAbilityDiagnosticsEnabled())
+		{
+			const AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo();
+			UE_LOG(
+				LogSyncAbilityMotionAbilityDiag,
+				Log,
+				TEXT("CanActivate denied by reaction suppression Ability=%s Avatar=%s Authority=%s Local=%s"),
+				*GetNameSafe(this),
+				*GetNameSafe(Avatar),
+				Avatar && Avatar->HasAuthority() ? TEXT("true") : TEXT("false"),
+				ActorInfo && ActorInfo->IsLocallyControlled() ? TEXT("true") : TEXT("false"));
+		}
+		return false;
+	}
+
 	return CanInterruptAnimatingAbility(ActorInfo);
+}
+
+bool USyncAbilityMotionGameplayAbility::DoesAbilityUseGameplayTag(FGameplayTag GameplayTag) const
+{
+	return GameplayTag.IsValid() &&
+		(GetAssetTags().HasTag(GameplayTag) || ActivationOwnedTags.HasTag(GameplayTag));
 }
 
 bool USyncAbilityMotionGameplayAbility::CanInterruptAnimatingAbility(
@@ -286,6 +355,203 @@ void USyncAbilityMotionGameplayAbility::CloseComboWindow()
 void USyncAbilityMotionGameplayAbility::ResetComboWindow()
 {
 	CloseComboWindow();
+}
+
+void USyncAbilityMotionGameplayAbility::ResetGameplayEffectWindows()
+{
+	GameplayEffectWindowRuntime.Reset();
+	GameplayEffectWindowRuntime.SetNum(GameplayEffectWindows.Num());
+}
+
+void USyncAbilityMotionGameplayAbility::ScheduleGameplayEffectWindowUpdate()
+{
+	if (GameplayEffectWindows.IsEmpty()) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	World->GetTimerManager().SetTimer(
+		GameplayEffectWindowTimerHandle,
+		this,
+		&ThisClass::UpdateGameplayEffectWindows,
+		FMath::Max(GameplayEffectWindowUpdateInterval, 0.01f),
+		true,
+		0.f);
+}
+
+void USyncAbilityMotionGameplayAbility::ClearGameplayEffectWindowUpdate()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(GameplayEffectWindowTimerHandle);
+	}
+
+	GameplayEffectWindowTimerHandle.Invalidate();
+}
+
+void USyncAbilityMotionGameplayAbility::UpdateGameplayEffectWindows()
+{
+	if (!IsActive())
+	{
+		ClearGameplayEffectWindowUpdate();
+		return;
+	}
+
+	const float PlayedPercent = GetCurrentMontagePlayedPercent();
+	if (PlayedPercent < 0.f)
+	{
+		return;
+	}
+
+	for (int32 Index = 0; Index < GameplayEffectWindows.Num(); ++Index)
+	{
+		if (!GameplayEffectWindowRuntime.IsValidIndex(Index))
+		{
+			continue;
+		}
+
+		const FSyncAbilityMotionGameplayEffectWindow& Window = GameplayEffectWindows[Index];
+		FSyncAbilityMotionGameplayEffectWindowRuntime& Runtime = GameplayEffectWindowRuntime[Index];
+		const float StartPercent = FMath::Clamp(Window.StartPercent, 0.f, 100.f);
+		const float EndPercent = FMath::Clamp(FMath::Max(Window.EndPercent, StartPercent), 0.f, 100.f);
+
+		if (!Runtime.bHasEntered && PlayedPercent >= StartPercent)
+		{
+			EnterGameplayEffectWindow(Index);
+		}
+
+		if (Runtime.bHasEntered && !Runtime.bHasExited && PlayedPercent >= EndPercent)
+		{
+			ExitGameplayEffectWindow(Index);
+		}
+	}
+}
+
+void USyncAbilityMotionGameplayAbility::EnterGameplayEffectWindow(int32 WindowIndex)
+{
+	if (!GameplayEffectWindows.IsValidIndex(WindowIndex) || !GameplayEffectWindowRuntime.IsValidIndex(WindowIndex))
+	{
+		return;
+	}
+
+	FSyncAbilityMotionGameplayEffectWindowRuntime& Runtime = GameplayEffectWindowRuntime[WindowIndex];
+	if (Runtime.bHasEntered)
+	{
+		return;
+	}
+
+	const FSyncAbilityMotionGameplayEffectWindow& Window = GameplayEffectWindows[WindowIndex];
+	RemoveGameplayEffectsFromSelf(Window.StartEffectsToRemove);
+	ApplyGameplayEffectsToSelf(Window.StartEffectsToApply);
+	ApplyGameplayEffectsToSelf(Window.DurationEffects);
+	Runtime.bHasEntered = true;
+}
+
+void USyncAbilityMotionGameplayAbility::ExitGameplayEffectWindow(int32 WindowIndex)
+{
+	if (!GameplayEffectWindows.IsValidIndex(WindowIndex) || !GameplayEffectWindowRuntime.IsValidIndex(WindowIndex))
+	{
+		return;
+	}
+
+	FSyncAbilityMotionGameplayEffectWindowRuntime& Runtime = GameplayEffectWindowRuntime[WindowIndex];
+	if (!Runtime.bHasEntered || Runtime.bHasExited)
+	{
+		return;
+	}
+
+	const FSyncAbilityMotionGameplayEffectWindow& Window = GameplayEffectWindows[WindowIndex];
+	RemoveGameplayEffectsFromSelf(Window.DurationEffects);
+	RemoveGameplayEffectsFromSelf(Window.EndEffectsToRemove);
+	ApplyGameplayEffectsToSelf(Window.EndEffectsToApply);
+	Runtime.bHasExited = true;
+}
+
+void USyncAbilityMotionGameplayAbility::CleanupActiveGameplayEffectWindows()
+{
+	for (int32 Index = 0; Index < GameplayEffectWindows.Num(); ++Index)
+	{
+		if (!GameplayEffectWindowRuntime.IsValidIndex(Index))
+		{
+			continue;
+		}
+
+		if (GameplayEffectWindowRuntime[Index].bHasEntered && !GameplayEffectWindowRuntime[Index].bHasExited)
+		{
+			ExitGameplayEffectWindow(Index);
+		}
+	}
+}
+
+float USyncAbilityMotionGameplayAbility::GetCurrentMontagePlayedPercent() const
+{
+	const UAnimMontage* Montage = GetCurrentMontage();
+	if (!Montage)
+	{
+		return -1.f;
+	}
+
+	const float MontageLength = Montage->GetPlayLength();
+	if (MontageLength <= KINDA_SMALL_NUMBER)
+	{
+		return -1.f;
+	}
+
+	const FGameplayAbilityActorInfo* ActorInfo = GetCurrentActorInfo();
+	const ACharacter* Character = ActorInfo ? Cast<ACharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
+	const USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+	const UAnimInstance* AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
+	if (!AnimInstance)
+	{
+		return -1.f;
+	}
+
+	return FMath::Clamp((AnimInstance->Montage_GetPosition(Montage) / MontageLength) * 100.f, 0.f, 100.f);
+}
+
+void USyncAbilityMotionGameplayAbility::ApplyGameplayEffectsToSelf(
+	const TArray<TSubclassOf<UGameplayEffect>>& EffectClasses) const
+{
+	if (EffectClasses.IsEmpty()) return;
+
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!ASC || !Avatar) return;
+
+	FGameplayEffectContextHandle EffectContext = ASC->MakeEffectContext();
+	EffectContext.AddSourceObject(this);
+	EffectContext.AddInstigator(Avatar, Avatar);
+
+	const float SourceLevel = FMath::Max(GetAbilityLevel(), 1);
+	for (const TSubclassOf<UGameplayEffect>& EffectClass : EffectClasses)
+	{
+		if (!EffectClass) continue;
+
+		const FGameplayEffectSpecHandle SpecHandle =
+			ASC->MakeOutgoingSpec(EffectClass, SourceLevel, EffectContext);
+		if (SpecHandle.IsValid())
+		{
+			ASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
+		}
+	}
+}
+
+void USyncAbilityMotionGameplayAbility::RemoveGameplayEffectsFromSelf(
+	const TArray<TSubclassOf<UGameplayEffect>>& EffectClasses) const
+{
+	if (EffectClasses.IsEmpty()) return;
+
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	if (!ASC) return;
+
+	for (const TSubclassOf<UGameplayEffect>& EffectClass : EffectClasses)
+	{
+		if (!EffectClass) continue;
+
+		FGameplayEffectQuery Query;
+		Query.EffectDefinition = EffectClass;
+		ASC->RemoveActiveEffects(Query);
+	}
 }
 
 bool USyncAbilityMotionGameplayAbility::ShouldPauseRootMotionForCharacterCollision(const ACharacter* Character) const

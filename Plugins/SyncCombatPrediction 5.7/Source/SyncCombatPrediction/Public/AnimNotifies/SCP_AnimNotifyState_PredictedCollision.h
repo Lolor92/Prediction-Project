@@ -32,6 +32,9 @@ struct FSCP_ActiveCollisionWindow
 
 	UPROPERTY()
 	TArray<FTransform> PreviousSampleTransforms;
+
+	UPROPERTY()
+	bool bCollisionEnabled = false;
 };
 
 UCLASS(meta=(DisplayName="SCP Predicted Collision"))

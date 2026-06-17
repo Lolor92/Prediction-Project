@@ -84,6 +84,39 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Zoom")
 	FVector ClosestZoomCameraOffset = FVector(50.f, 0.f, 70.f);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Simulation")
+	bool bSimulateMovementInput = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Simulation", meta=(Categories="SyncInput"))
+	TArray<FGameplayTag> SimulatedInputTagPool;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Simulation", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float SimulatedMovementChance = 0.65f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Simulation", meta=(ClampMin="0.01", Units="Seconds"))
+	float SimulatedInputMinHoldDuration = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Simulation", meta=(ClampMin="0.01", Units="Seconds"))
+	float SimulatedInputMaxHoldDuration = 0.7f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Simulation", meta=(ClampMin="0.0", Units="Seconds"))
+	float SimulatedInputMinPauseDuration = 0.05f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Simulation", meta=(ClampMin="0.0", Units="Seconds"))
+	float SimulatedInputMaxPauseDuration = 0.25f;
+
+	UFUNCTION(BlueprintCallable, Category="SyncInput|Simulation")
+	void StartInputSimulation(const TArray<FGameplayTag>& InputTags);
+
+	UFUNCTION(BlueprintCallable, Category="SyncInput|Simulation")
+	void StopInputSimulation();
+
+	UFUNCTION(BlueprintPure, Category="SyncInput|Simulation")
+	bool IsInputSimulationRunning() const { return bInputSimulationRunning; }
+
+	UFUNCTION(BlueprintCallable, Category="SyncInput|Held Input")
+	void SuppressHeldInputForAbilityTag(FGameplayTag AbilityOrOwnedTag);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -101,6 +134,7 @@ private:
 	void BindActionsFromConfig();
 	bool TryActivateInputTag(FGameplayTag InputTag, bool bForwardPressedToAlreadyActiveSpecs);
 	bool DoesSpecMatchInputTag(const FGameplayAbilitySpec& Spec, const FGameplayTag& InputTag) const;
+	bool DoesSpecUseGameplayTag(const FGameplayAbilitySpec& Spec, const FGameplayTag& GameplayTag) const;
 	bool CanLocallyActivateSpec(const FGameplayAbilitySpec& Spec) const;
 	void ForwardInputPressedToSpec(FGameplayAbilitySpec& Spec) const;
 	void ForwardInputReleasedToSpec(FGameplayAbilitySpec& Spec) const;
@@ -116,6 +150,12 @@ private:
 	void RetryHeldInputActivation();
 	void ScheduleHeldInputRetry();
 	void ClearHeldInputRetry();
+	void ScheduleNextSimulatedInput();
+	void PressRandomSimulatedInput();
+	void ReleaseSimulatedInput();
+	void SetSimulatedMovementHeld(bool bHeld);
+	void ClearSimulatedInputTimers();
+	TArray<FGameplayTag> GetDefaultSimulatedInputTags() const;
 
 	// helpers
 	bool IsLocallyControlledOwner() const;
@@ -155,4 +195,22 @@ private:
 
 	UPROPERTY(Transient)
 	float DesiredZoomArmLength = 0.f;
+
+	UPROPERTY(Transient)
+	bool bZoomInterpolationActive = false;
+
+	UPROPERTY(Transient)
+	bool bInputSimulationRunning = false;
+
+	UPROPERTY(Transient)
+	TArray<FGameplayTag> SimulatedInputTags;
+
+	UPROPERTY(Transient)
+	FGameplayTag ActiveSimulatedInputTag;
+
+	UPROPERTY(Transient)
+	FVector2D ActiveSimulatedMoveInput = FVector2D::ZeroVector;
+
+	FTimerHandle SimulatedInputPressTimerHandle;
+	FTimerHandle SimulatedInputReleaseTimerHandle;
 };

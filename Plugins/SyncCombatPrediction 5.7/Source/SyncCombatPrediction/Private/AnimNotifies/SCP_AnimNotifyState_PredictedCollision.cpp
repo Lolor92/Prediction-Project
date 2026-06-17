@@ -73,7 +73,7 @@ void USCP_AnimNotifyState_PredictedCollision::NotifyBegin(
 
 	USCP_CombatPredictionComponent* PredictionComponent =
 		OwnerActor->FindComponentByClass<USCP_CombatPredictionComponent>();
-	if (!PredictionComponent || !PredictionComponent->HasActivePrediction())
+	if (!PredictionComponent)
 	{
 		if (IsSyncCombatPredictionNotifyDiagnosticsEnabled())
 		{
@@ -83,44 +83,75 @@ void USCP_AnimNotifyState_PredictedCollision::NotifyBegin(
 				TEXT("CollisionNotifyBegin skipped Owner={%s} Animation=%s Reason=%s"),
 				*BuildNotifyActorDebugString(OwnerActor),
 				*GetNameSafe(Animation),
-				PredictionComponent ? TEXT("NoActivePrediction") : TEXT("NoPredictionComponent"));
+				TEXT("NoPredictionComponent"));
 		}
 		return;
+	}
+
+	static const FName NoneSocketOption(TEXT("None"));
+	const bool bWantsCollision = SourceSocketName != NoneSocketOption;
+
+	if (MovementSettings.MoveDirection != ESCP_HitMoveDirection::None
+		&& (MovementSettings.TriggerTiming == ESCP_HitTransformTriggerTiming::OnActivation
+			|| MovementSettings.TriggerTiming == ESCP_HitTransformTriggerTiming::Both))
+	{
+		FSCP_HitTransformSettings ActivationTransformSettings;
+		ActivationTransformSettings.MovementSettings = MovementSettings;
+		PredictionComponent->ApplyActivationTransformSettings(ActivationTransformSettings);
 	}
 
 	FSCP_ActiveCollisionWindow Window;
 	Window.PredictionComponent = PredictionComponent;
-	Window.PredictionContext = PredictionComponent->BeginPredictionEvent();
+	Window.bCollisionEnabled = bWantsCollision;
 
-	if (!Window.PredictionContext.IsValidForPrediction())
+	if (bWantsCollision)
 	{
-		if (IsSyncCombatPredictionNotifyDiagnosticsEnabled())
+		if (!PredictionComponent->HasActivePrediction())
 		{
-			UE_LOG(
-				LogSyncCombatPredictionNotifyDiag,
-				Log,
-				TEXT("CollisionNotifyBegin skipped Owner={%s} Animation=%s Reason=InvalidPredictionContext Context={%s}"),
-				*BuildNotifyActorDebugString(OwnerActor),
-				*GetNameSafe(Animation),
-				*Window.PredictionContext.ToDebugString());
+			if (IsSyncCombatPredictionNotifyDiagnosticsEnabled())
+			{
+				UE_LOG(
+					LogSyncCombatPredictionNotifyDiag,
+					Log,
+					TEXT("CollisionNotifyBegin skipped Owner={%s} Animation=%s Reason=NoActivePrediction"),
+					*BuildNotifyActorDebugString(OwnerActor),
+					*GetNameSafe(Animation));
+			}
+			return;
 		}
-		return;
-	}
 
-	if (!BuildSampleTransforms(MeshComp, Window.PreviousSampleTransforms))
-	{
-		if (IsSyncCombatPredictionNotifyDiagnosticsEnabled())
+		Window.PredictionContext = PredictionComponent->BeginPredictionEvent();
+
+		if (!Window.PredictionContext.IsValidForPrediction())
 		{
-			UE_LOG(
-				LogSyncCombatPredictionNotifyDiag,
-				Log,
-				TEXT("CollisionNotifyBegin skipped Owner={%s} Animation=%s Reason=BuildSampleTransformsFailed Socket=%s CustomSocket=%s"),
-				*BuildNotifyActorDebugString(OwnerActor),
-				*GetNameSafe(Animation),
-				*SourceSocketName.ToString(),
-				*CustomSourceSocketName.ToString());
+			if (IsSyncCombatPredictionNotifyDiagnosticsEnabled())
+			{
+				UE_LOG(
+					LogSyncCombatPredictionNotifyDiag,
+					Log,
+					TEXT("CollisionNotifyBegin skipped Owner={%s} Animation=%s Reason=InvalidPredictionContext Context={%s}"),
+					*BuildNotifyActorDebugString(OwnerActor),
+					*GetNameSafe(Animation),
+					*Window.PredictionContext.ToDebugString());
+			}
+			return;
 		}
-		return;
+
+		if (!BuildSampleTransforms(MeshComp, Window.PreviousSampleTransforms))
+		{
+			if (IsSyncCombatPredictionNotifyDiagnosticsEnabled())
+			{
+				UE_LOG(
+					LogSyncCombatPredictionNotifyDiag,
+					Log,
+					TEXT("CollisionNotifyBegin skipped Owner={%s} Animation=%s Reason=BuildSampleTransformsFailed Socket=%s CustomSocket=%s"),
+					*BuildNotifyActorDebugString(OwnerActor),
+					*GetNameSafe(Animation),
+					*SourceSocketName.ToString(),
+					*CustomSourceSocketName.ToString());
+			}
+			return;
+		}
 	}
 
 	ActiveWindows.Add(MeshComp, Window);
@@ -154,8 +185,25 @@ void USCP_AnimNotifyState_PredictedCollision::NotifyTick(
 	}
 
 	FSCP_ActiveCollisionWindow* Window = ActiveWindows.Find(MeshComp);
-	if (!Window)
+	if (!Window || !Window->bCollisionEnabled)
 	{
+		return;
+	}
+
+	if (!Window->PredictionComponent->IsPredictionContextActive(Window->PredictionContext))
+	{
+		if (IsSyncCombatPredictionNotifyDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPredictionNotifyDiag,
+				Log,
+				TEXT("CollisionNotifyTick stopped Owner={%s} Animation=%s Reason=InactivePredictionContext Context={%s}"),
+				*BuildNotifyActorDebugString(MeshComp->GetOwner()),
+				*GetNameSafe(Animation),
+				*Window->PredictionContext.ToDebugString());
+		}
+
+		ActiveWindows.Remove(MeshComp);
 		return;
 	}
 
@@ -197,6 +245,7 @@ FString USCP_AnimNotifyState_PredictedCollision::GetNotifyName_Implementation() 
 TArray<FName> USCP_AnimNotifyState_PredictedCollision::GetSourceSocketNameOptions() const
 {
 	return {
+		TEXT("None"),
 		TEXT("OffHandWeaponSocket"),
 		TEXT("MainHandWeaponSocket"),
 		TEXT("LeftFootSocket"),

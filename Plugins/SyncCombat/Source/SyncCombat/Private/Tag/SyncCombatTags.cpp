@@ -19,6 +19,7 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_State, "State");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Action, "State.Action");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Action_Blocking, "State.Action.Blocking");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Action_Dodging, "State.Action.Dodging");
+UE_DEFINE_GAMEPLAY_TAG(TAG_State_Action_Escaping, "State.Action.Escaping");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Action_GettingUp, "State.Action.GettingUp");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Action_Parrying, "State.Action.Parrying");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_CC, "State.CC");

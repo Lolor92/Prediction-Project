@@ -149,6 +149,7 @@ void FSyncCombatTagReactionRuntime::OnReactionTagChanged(const FGameplayTag Tag,
 				(Reaction.Policy == ESyncCombatTagReactionPolicy::OnRemove && !bAdded);
 
 			if (!bShouldRun) continue;
+			if (!DoesReactionPassOwnerTagRequirements(Reaction)) continue;
 
 			QueueEffectRemove(Reaction, Tag);
 			QueueEffectApply(Reaction, Tag);
@@ -161,6 +162,30 @@ void FSyncCombatTagReactionRuntime::OnReactionTagChanged(const FGameplayTag Tag,
 		if (!Binding.Tags.HasTagExact(Tag)) continue;
 		SetAnimBool(Binding, IsAnimBoolActive(Binding));
 	}
+}
+
+bool FSyncCombatTagReactionRuntime::DoesReactionPassOwnerTagRequirements(
+	const FSyncCombatTagReactionBinding& Binding) const
+{
+	const UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
+	if (!ASC)
+	{
+		return false;
+	}
+
+	if (!Binding.RequiredOwnerTags.IsEmpty() &&
+		!ASC->HasAllMatchingGameplayTags(Binding.RequiredOwnerTags))
+	{
+		return false;
+	}
+
+	if (!Binding.BlockedOwnerTags.IsEmpty() &&
+		ASC->HasAnyMatchingGameplayTags(Binding.BlockedOwnerTags))
+	{
+		return false;
+	}
+
+	return true;
 }
 
 void FSyncCombatTagReactionRuntime::PredictReactionVisuals(const FGameplayTagContainer& TriggerTags,

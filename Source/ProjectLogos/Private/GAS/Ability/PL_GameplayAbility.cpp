@@ -1,5 +1,6 @@
 ﻿#include "GAS/Ability/PL_GameplayAbility.h"
 #include "BlueprintLibrary/SCP_CombatPredictionBlueprintLibrary.h"
+#include "Components/SCP_CombatPredictionComponent.h"
 
 UPL_GameplayAbility::UPL_GameplayAbility()
 {
@@ -34,5 +35,12 @@ void UPL_GameplayAbility::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
+	AActor* AvatarActor = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo();
+	if (USCP_CombatPredictionComponent* PredictionComponent =
+		USCP_CombatPredictionBlueprintLibrary::GetCombatPredictionComponent(AvatarActor))
+	{
+		PredictionComponent->ClearActivePredictionForAbility(this);
+	}
+
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

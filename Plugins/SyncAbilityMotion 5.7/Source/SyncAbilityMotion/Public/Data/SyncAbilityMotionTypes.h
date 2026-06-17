@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "SyncAbilityMotionTypes.generated.h"
 
+class UGameplayEffect;
+
 // Replicated state shared between abilities, movement, and animation.
 USTRUCT(BlueprintType)
 struct FSyncAbilityMotionState
@@ -60,4 +62,31 @@ struct FSyncAbilityMotionMontageLockout
 
 	UPROPERTY(EditDefaultsOnly, Category="Montage Lockout")
 	bool bBypassMontageLockout = false;
+};
+
+USTRUCT(BlueprintType)
+struct FSyncAbilityMotionGameplayEffectWindow
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditDefaultsOnly, Category="Gameplay Effects", meta=(ClampMin="0.0", ClampMax="100.0", UIMin="0.0", UIMax="100.0", Units="Percent"))
+	float StartPercent = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Gameplay Effects", meta=(ClampMin="0.0", ClampMax="100.0", UIMin="0.0", UIMax="100.0", Units="Percent"))
+	float EndPercent = 100.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Gameplay Effects", meta=(DisplayName="On Start - Apply"))
+	TArray<TSubclassOf<UGameplayEffect>> StartEffectsToApply;
+
+	UPROPERTY(EditDefaultsOnly, Category="Gameplay Effects", meta=(DisplayName="On Start - Remove"))
+	TArray<TSubclassOf<UGameplayEffect>> StartEffectsToRemove;
+
+	UPROPERTY(EditDefaultsOnly, Category="Gameplay Effects", meta=(DisplayName="During Window"))
+	TArray<TSubclassOf<UGameplayEffect>> DurationEffects;
+
+	UPROPERTY(EditDefaultsOnly, Category="Gameplay Effects", meta=(DisplayName="On End - Apply"))
+	TArray<TSubclassOf<UGameplayEffect>> EndEffectsToApply;
+
+	UPROPERTY(EditDefaultsOnly, Category="Gameplay Effects", meta=(DisplayName="On End - Remove"))
+	TArray<TSubclassOf<UGameplayEffect>> EndEffectsToRemove;
 };
