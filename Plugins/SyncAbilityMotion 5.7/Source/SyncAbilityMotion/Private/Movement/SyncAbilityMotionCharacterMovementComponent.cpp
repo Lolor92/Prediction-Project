@@ -100,14 +100,27 @@ namespace
 		return UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Character);
 	}
 
-	bool ShouldPauseRootMotionOnCharacterImpact(const USyncAbilityMotionCharacterMovementComponent* MoveComp)
+	const USyncAbilityMotionGameplayAbility* GetAnimatingSyncAbilityMotionAbility(
+		const USyncAbilityMotionCharacterMovementComponent* MoveComp)
 	{
 		ACharacter* Character = MoveComp ? Cast<ACharacter>(MoveComp->GetOwner()) : nullptr;
 		const UAbilitySystemComponent* ASC = GetAbilitySystemComponent(Character);
 		const UGameplayAbility* AnimatingAbility = ASC ? ASC->GetAnimatingAbility() : nullptr;
-		const USyncAbilityMotionGameplayAbility* Ability =
-			Cast<USyncAbilityMotionGameplayAbility>(AnimatingAbility);
+
+		return Cast<USyncAbilityMotionGameplayAbility>(AnimatingAbility);
+	}
+
+	bool ShouldPauseRootMotionOnCharacterImpact(const USyncAbilityMotionCharacterMovementComponent* MoveComp)
+	{
+		const USyncAbilityMotionGameplayAbility* Ability = GetAnimatingSyncAbilityMotionAbility(MoveComp);
 		return Ability && Ability->ShouldPauseRootMotionOnCharacterImpact();
+	}
+
+	bool ShouldUsePredictedMovementCorrectionTolerance(
+		const USyncAbilityMotionCharacterMovementComponent* MoveComp)
+	{
+		const USyncAbilityMotionGameplayAbility* Ability = GetAnimatingSyncAbilityMotionAbility(MoveComp);
+		return Ability && Ability->ShouldUsePredictedMovementCorrectionTolerance();
 	}
 }
 
@@ -250,8 +263,19 @@ void USyncAbilityMotionCharacterMovementComponent::RefreshAbilityRootMotionMode(
 		return;
 	}
 
-	AnimInstance->bRootMotionEnabled = !bAbilityRootMotionSuppressed;
-	AnimInstance->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
+	const bool bRootMotionEnabled = !bAbilityRootMotionSuppressed;
+	const bool bKeepSuppressedRootMotionForPause = ShouldKeepSuppressedRootMotionForAbilityPause();
+
+	AnimInstance->bRootMotionEnabled = bRootMotionEnabled;
+
+	if (bRootMotionEnabled || bKeepSuppressedRootMotionForPause)
+	{
+		AnimInstance->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
+	}
+	else
+	{
+		AnimInstance->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
+	}
 }
 
 void USyncAbilityMotionCharacterMovementComponent::SetAbilityMovementInputSuppressed(bool bInSuppressed)
@@ -331,6 +355,12 @@ FNetworkPredictionData_Client* USyncAbilityMotionCharacterMovementComponent::Get
 	return ClientPredictionData;
 }
 
+bool USyncAbilityMotionCharacterMovementComponent::ShouldKeepSuppressedRootMotionForAbilityPause() const
+{
+	return bAbilityRootMotionSuppressed &&
+		(bAbilityRootMotionPausedByCharacterImpact || bAbilityMovementInputSuppressed);
+}
+
 bool USyncAbilityMotionCharacterMovementComponent::ShouldUsePredictedAbilityCorrectionTolerance() const
 {
 	if (!CharacterOwner || !CharacterOwner->HasAuthority() || CharacterOwner->IsLocallyControlled())
@@ -348,11 +378,7 @@ bool USyncAbilityMotionCharacterMovementComponent::ShouldUsePredictedAbilityCorr
 		return false;
 	}
 
-	const USkeletalMeshComponent* MeshComp = CharacterOwner->GetMesh();
-	const UAnimInstance* AnimInstance = MeshComp ? MeshComp->GetAnimInstance() : nullptr;
-	const UAnimMontage* Montage = AnimInstance ? AnimInstance->GetCurrentActiveMontage() : nullptr;
-
-	return Montage && Montage->GetFName() == FName(TEXT("AM_Rush"));
+	return ShouldUsePredictedMovementCorrectionTolerance(this);
 }
 
 void USyncAbilityMotionCharacterMovementComponent::RefreshPredictedAbilityCorrectionTolerance()
@@ -369,7 +395,7 @@ FVector USyncAbilityMotionCharacterMovementComponent::ConstrainAnimRootMotionVel
 {
 	FVector Result = Super::ConstrainAnimRootMotionVelocity(RootMotionVelocity, CurrentVelocity);
 
-	if (!bAbilityRootMotionSuppressed)
+	if (!ShouldKeepSuppressedRootMotionForAbilityPause())
 	{
 		return Result;
 	}

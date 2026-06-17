@@ -13,6 +13,7 @@ public:
 	void SetAbilityRootMotionSuppressed(const bool bInSuppressed);
 	bool IsAbilityRootMotionSuppressed() const { return bAbilityRootMotionSuppressed; }
 	void RefreshAbilityRootMotionMode();
+	bool ShouldKeepSuppressedRootMotionForAbilityPause() const;
 	bool ShouldUsePredictedAbilityCorrectionTolerance() const;
 	void RefreshPredictedAbilityCorrectionTolerance();
 

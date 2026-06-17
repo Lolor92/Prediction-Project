@@ -155,6 +155,8 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 			Cast<USyncAbilityMotionCharacterMovementComponent>(CharacterMovementComponent))
 		{
 			SyncMoveComp->SetAbilityRootMotionPausedByCharacterImpact(false);
+			SyncMoveComp->SetAbilityRootMotionSuppressed(false);
+			SyncMoveComp->SetAbilityMovementInputSuppressed(false);
 		}
 
 		LastTrackedAbility = nullptr;
@@ -203,40 +205,46 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 		!Ability->MontageLockout.bUseMontageProgressLockout ||
 		Percent >= Ability->MontageLockout.MontageProgressBeforeInterrupt;
 
-	const bool bReleaseWasAlreadyReached = bReachedReleasePoint || bReleasedRootMotionThisMontage;
-
-	const bool bHasMovementInput =
-		CharacterMovementComponent &&
-		!CharacterMovementComponent->GetCurrentAcceleration().IsNearlyZero(0.01f);
-
-	if (bReleaseWasAlreadyReached && bHasMovementInput)
+	if (bReachedReleasePoint)
 	{
 		bReleasedRootMotionThisMontage = true;
 	}
 
+	const bool bReleaseWasAlreadyReached = bReachedReleasePoint || bReleasedRootMotionThisMontage;
+
+	const bool bHasMovementInput =
+		Character &&
+		!Character->GetLastMovementInputVector().IsNearlyZero(0.01f);
+
 	USyncAbilityMotionCharacterMovementComponent* SyncMoveComp =
 		Cast<USyncAbilityMotionCharacterMovementComponent>(CharacterMovementComponent);
+
 	if (bReleaseWasAlreadyReached && SyncMoveComp)
 	{
 		SyncMoveComp->SetAbilityRootMotionPausedByCharacterImpact(false);
+		SyncMoveComp->SetAbilityMovementInputSuppressed(false);
 	}
 
 	const bool bShouldPauseByCharacterProbe =
-		!bReleasedRootMotionThisMontage && Ability->ShouldPauseRootMotionForCharacterCollision(Character);
+		!bReleaseWasAlreadyReached &&
+		Ability->ShouldPauseRootMotionForCharacterCollision(Character);
 
 	const bool bPausedByCharacterCollision =
-		bShouldPauseByCharacterProbe ||
-		(SyncMoveComp && SyncMoveComp->IsAbilityRootMotionPausedByCharacterImpact());
+		!bReleaseWasAlreadyReached &&
+		(
+			bShouldPauseByCharacterProbe ||
+			(SyncMoveComp && SyncMoveComp->IsAbilityRootMotionPausedByCharacterImpact())
+		);
 
-	if (!bReleasedRootMotionThisMontage && SyncMoveComp)
+	if (!bReleaseWasAlreadyReached && SyncMoveComp)
 	{
 		SyncMoveComp->SetAbilityRootMotionPausedByCharacterImpact(bPausedByCharacterCollision);
 	}
 
 	FSyncAbilityMotionState DesiredState;
 	DesiredState.bCanBlendMontage = bReleaseWasAlreadyReached;
-	DesiredState.bShouldBlendLowerBody = bReleaseWasAlreadyReached && bHasMovementInput;
-	DesiredState.bRootMotionEnabled = !bReleasedRootMotionThisMontage && !bPausedByCharacterCollision;
+	DesiredState.bShouldBlendLowerBody = bReleaseWasAlreadyReached;
+	DesiredState.bRootMotionEnabled = !bReleaseWasAlreadyReached && !bPausedByCharacterCollision;
 	DesiredState.bMovementInputSuppressed = !bReleaseWasAlreadyReached;
 
 	if (SyncMoveComp)
@@ -253,7 +261,7 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 		UE_LOG(
 			LogSyncAbilityMotionAnimDiag,
 			Log,
-			TEXT("MotionState changed Character=%s Ability=%s Montage=%s Seq=%u Percent=%.2f ReleaseReached=%s ReleasedByInput=%s HasInput=%s PausedByCollision=%s Previous={Blend=%s LowerBody=%s RootMotion=%s InputSuppressed=%s} Desired={Blend=%s LowerBody=%s RootMotion=%s InputSuppressed=%s}"),
+			TEXT("MotionState changed Character=%s Ability=%s Montage=%s Seq=%u Percent=%.2f ReleaseReached=%s ReleasedRootMotion=%s HasInput=%s PausedByCollision=%s Previous={Blend=%s LowerBody=%s RootMotion=%s InputSuppressed=%s} Desired={Blend=%s LowerBody=%s RootMotion=%s InputSuppressed=%s}"),
 			*GetNameSafe(Character),
 			*GetNameSafe(Ability),
 			*GetNameSafe(CurrentMontage),

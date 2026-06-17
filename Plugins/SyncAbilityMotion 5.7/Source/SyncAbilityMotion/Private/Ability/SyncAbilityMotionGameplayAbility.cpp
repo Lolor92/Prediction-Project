@@ -135,13 +135,10 @@ void USyncAbilityMotionGameplayAbility::EndAbility(const FGameplayAbilitySpecHan
 
 	if (ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo()))
 	{
-		if (!Character->IsLocallyControlled())
+		if (USyncAbilityMotionComponent* MotionComponent =
+			Character->FindComponentByClass<USyncAbilityMotionComponent>())
 		{
-			if (USyncAbilityMotionComponent* MotionComponent =
-				Character->FindComponentByClass<USyncAbilityMotionComponent>())
-			{
-				MotionComponent->ResetAbilityMotionState();
-			}
+			MotionComponent->ResetAbilityMotionState();
 		}
 	}
 

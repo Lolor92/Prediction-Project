@@ -66,6 +66,10 @@ public:
 	uint32 GetActivationSequenceId() const { return ActivationSequenceId; }
 	bool ShouldPauseRootMotionForCharacterCollision(const ACharacter* Character) const;
 	bool ShouldPauseRootMotionOnCharacterImpact() const { return bPauseRootMotionOnCharacterImpact; }
+	bool ShouldUsePredictedMovementCorrectionTolerance() const
+	{
+		return bUsePredictedMovementCorrectionTolerance;
+	}
 
 protected:
 	bool CanInterruptAnimatingAbility(const FGameplayAbilityActorInfo* ActorInfo) const;
@@ -98,10 +102,16 @@ protected:
 	void CloseComboWindow();
 
 	UPROPERTY(EditDefaultsOnly, Category="Ability|Root Motion")
-	bool bPauseRootMotionOnCharacterCollision = true;
+	bool bPauseRootMotionOnCharacterCollision = false;
 
 	UPROPERTY(EditDefaultsOnly, Category="Ability|Root Motion")
 	bool bPauseRootMotionOnCharacterImpact = true;
+
+	UPROPERTY(EditDefaultsOnly, Category="Ability|Prediction", meta=(
+		DisplayName="Use Predicted Movement Correction Tolerance",
+		ToolTip="Allows this locally predicted movement ability to temporarily relax server movement correction while its saved-move ability stop flags are active. Enable for predicted dashes/rushes/leaps. Keep disabled for hit reactions, knockbacks, stuns, roots, and server-authoritative movement."
+	))
+	bool bUsePredictedMovementCorrectionTolerance = false;
 
 	UPROPERTY(EditDefaultsOnly, Category="Ability|Root Motion", meta=(EditCondition="bPauseRootMotionOnCharacterCollision",
 		ClampMin="0.0", ClampMax="180.0", UIMin="0.0", UIMax="180.0", Units="Degrees"))
