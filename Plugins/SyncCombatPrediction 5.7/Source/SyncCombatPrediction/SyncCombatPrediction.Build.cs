@@ -30,7 +30,8 @@ public class SyncCombatPrediction : ModuleRules
 				"Engine",
 				"GameplayAbilities",
 				"GameplayTags",
-				"GameplayTasks"
+				"GameplayTasks",
+				"SyncAbilityMotion"
 			}
 			);
 			

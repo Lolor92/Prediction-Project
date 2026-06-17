@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "TimerManager.h"
 #include "SyncAbilityMotionCharacterMovementComponent.generated.h"
 
 UCLASS()
@@ -18,7 +19,13 @@ public:
 	void RefreshPredictedAbilityCorrectionTolerance();
 
 	void SetAbilityMovementInputSuppressed(bool bInSuppressed);
-	bool IsAbilityMovementInputSuppressed() const { return bAbilityMovementInputSuppressed; }
+	void BeginReactionMovementInputLock(float Duration);
+	void EndReactionMovementInputLock();
+	bool IsReactionMovementInputLocked() const { return bReactionMovementInputLocked; }
+	bool IsAbilityMovementInputSuppressed() const
+	{
+		return bAbilityMovementInputSuppressed || bReactionMovementInputLocked;
+	}
 
 	void SetAbilityRootMotionPausedByCharacterImpact(bool bInPaused);
 	bool IsAbilityRootMotionPausedByCharacterImpact() const { return bAbilityRootMotionPausedByCharacterImpact; }
@@ -62,9 +69,14 @@ private:
 	UPROPERTY(Transient)
 	bool bAbilityRootMotionPausedByCharacterImpact = false;
 
+	UPROPERTY(Transient)
+	bool bReactionMovementInputLocked = false;
+
+	FTimerHandle ReactionMovementInputLockTimerHandle;
+
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
-	float AbilityStopCorrectionSnapDistance = 0.f;
+	float AbilityStopCorrectionSnapDistance = 8.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Directional Speed", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
 	float BackwardSpeedMultiplier = 0.6f;

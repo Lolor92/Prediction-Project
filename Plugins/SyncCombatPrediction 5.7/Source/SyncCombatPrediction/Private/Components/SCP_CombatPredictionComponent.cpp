@@ -16,6 +16,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
+#include "Movement/SyncAbilityMotionCharacterMovementComponent.h"
 #include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSyncCombatPrediction, Log, All);
@@ -53,6 +54,29 @@ namespace SyncCombatPrediction
 		}
 
 		return UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Actor);
+	}
+
+	void BeginReactionMovementInputLockOnActor(AActor* TargetActor, const UAnimMontage* ReactionMontage)
+	{
+		ACharacter* Character = Cast<ACharacter>(TargetActor);
+		if (!Character)
+		{
+			return;
+		}
+
+		USyncAbilityMotionCharacterMovementComponent* MoveComp =
+			Cast<USyncAbilityMotionCharacterMovementComponent>(Character->GetCharacterMovement());
+
+		if (!MoveComp)
+		{
+			return;
+		}
+
+		const float Duration = ReactionMontage
+			? ReactionMontage->GetPlayLength() + ReactionMontage->GetDefaultBlendOutTime() + 0.05f
+			: 0.25f;
+
+		MoveComp->BeginReactionMovementInputLock(Duration);
 	}
 
 	FGameplayTag ResolveDamageTag(const FGameplayTag& ConfiguredTag, const TCHAR* DefaultTagName)
@@ -545,6 +569,11 @@ bool USCP_CombatPredictionComponent::PredictTargetReaction(
 		Hit.TargetActor,
 		Hit.DefenseSettings);
 
+	if (bShouldApplyCleanReaction)
+	{
+		SyncCombatPrediction::BeginReactionMovementInputLockOnActor(Hit.TargetActor, ReactionMontage);
+	}
+
 	ApplyHitTransformEffects(
 		Hit.InstigatorActor,
 		Hit.TargetActor,
@@ -679,8 +708,14 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 	Context.bIsAuthority = true;
 	Context.bIsLocallyControlled = false;
 
-	ApplyHitTransformEffects(GetOwner(), TargetActor, TransformSettings, DefenseSettings);
 	const bool bShouldApplyCleanReaction = ShouldApplyCleanHitReaction(GetOwner(), TargetActor, DefenseSettings);
+	if (bShouldApplyCleanReaction)
+	{
+		SyncCombatPrediction::BeginReactionMovementInputLockOnActor(TargetActor, ReactionMontage);
+	}
+
+	ApplyHitTransformEffects(GetOwner(), TargetActor, TransformSettings, DefenseSettings);
+
 	bool bPlayedOnServer = false;
 	if (bShouldApplyCleanReaction)
 	{
@@ -827,6 +862,11 @@ void USCP_CombatPredictionComponent::MulticastPlayConfirmedTargetReactionWithTra
 		return;
 	}
 
+	if (ReactionMontage)
+	{
+		SyncCombatPrediction::BeginReactionMovementInputLockOnActor(TargetActor, ReactionMontage);
+	}
+
 	ApplyHitTransformEffects(InstigatorActor, TargetActor, TransformSettings, DefenseSettings);
 
 	if (ReactionMontage)
@@ -904,6 +944,11 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_
 				*GetNameSafe(ReactionMontage));
 		}
 		return;
+	}
+
+	if (ReactionMontage)
+	{
+		SyncCombatPrediction::BeginReactionMovementInputLockOnActor(GetOwner(), ReactionMontage);
 	}
 
 	ApplyHitTransformEffects(InstigatorActor, GetOwner(), TransformSettings, DefenseSettings);

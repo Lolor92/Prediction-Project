@@ -10,6 +10,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
+#include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSyncAbilityMotionMoveDiag, Log, All);
 
@@ -300,6 +301,62 @@ void USyncAbilityMotionCharacterMovementComponent::SetAbilityMovementInputSuppre
 	RefreshPredictedAbilityCorrectionTolerance();
 }
 
+void USyncAbilityMotionCharacterMovementComponent::BeginReactionMovementInputLock(float Duration)
+{
+	const float SafeDuration = FMath::Max(Duration, 0.05f);
+
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Log,
+			TEXT("BeginReactionMovementInputLock Duration=%.3f %s"),
+			SafeDuration,
+			*DescribeMovementState(this));
+	}
+
+	bReactionMovementInputLocked = true;
+
+	StopMovementImmediately();
+	Acceleration = FVector::ZeroVector;
+	ConsumeInputVector();
+	ClearAccumulatedForces();
+
+	RefreshPredictedAbilityCorrectionTolerance();
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReactionMovementInputLockTimerHandle);
+		World->GetTimerManager().SetTimer(
+			ReactionMovementInputLockTimerHandle,
+			this,
+			&USyncAbilityMotionCharacterMovementComponent::EndReactionMovementInputLock,
+			SafeDuration,
+			false);
+	}
+}
+
+void USyncAbilityMotionCharacterMovementComponent::EndReactionMovementInputLock()
+{
+	if (!bReactionMovementInputLocked)
+	{
+		return;
+	}
+
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Log,
+			TEXT("EndReactionMovementInputLock %s"),
+			*DescribeMovementState(this));
+	}
+
+	bReactionMovementInputLocked = false;
+
+	RefreshPredictedAbilityCorrectionTolerance();
+}
+
 void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionPausedByCharacterImpact(bool bInPaused)
 {
 	if (bAbilityRootMotionPausedByCharacterImpact == bInPaused)
@@ -369,7 +426,7 @@ bool USyncAbilityMotionCharacterMovementComponent::ShouldUsePredictedAbilityCorr
 	}
 
 	const bool bInAbilityMoveWindow =
-		bAbilityMovementInputSuppressed ||
+		IsAbilityMovementInputSuppressed() ||
 		bAbilityRootMotionSuppressed ||
 		bAbilityRootMotionPausedByCharacterImpact;
 
@@ -444,7 +501,7 @@ void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(
 
 	const bool bInAbilityStopWindow =
 		bAbilityRootMotionSuppressed ||
-		bAbilityMovementInputSuppressed ||
+		IsAbilityMovementInputSuppressed() ||
 		bAbilityRootMotionPausedByCharacterImpact;
 
 	const bool bShouldSnapSmallAbilityCorrection =
@@ -706,7 +763,7 @@ float USyncAbilityMotionCharacterMovementComponent::GetMaxSpeed() const
 
 FVector USyncAbilityMotionCharacterMovementComponent::ScaleInputAcceleration(const FVector& InputAcceleration) const
 {
-	if (bAbilityMovementInputSuppressed)
+	if (IsAbilityMovementInputSuppressed())
 	{
 		return FVector::ZeroVector;
 	}
