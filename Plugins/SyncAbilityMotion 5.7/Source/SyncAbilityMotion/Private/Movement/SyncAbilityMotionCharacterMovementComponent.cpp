@@ -227,29 +227,39 @@ void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionSuppresse
 	}
 
 	RefreshAbilityRootMotionMode();
+	RefreshPredictedAbilityCorrectionTolerance();
 }
 
 void USyncAbilityMotionCharacterMovementComponent::RefreshAbilityRootMotionMode()
 {
-	if (!CharacterOwner) return;
+	if (!CharacterOwner)
+	{
+		return;
+	}
 
 	USkeletalMeshComponent* MeshComp = CharacterOwner->GetMesh();
-	if (!MeshComp) return;
+	if (!MeshComp)
+	{
+		return;
+	}
 
 	USyncAbilityMotionAnimInstance* AnimInstance =
 		Cast<USyncAbilityMotionAnimInstance>(MeshComp->GetAnimInstance());
-	if (!AnimInstance) return;
+	if (!AnimInstance)
+	{
+		return;
+	}
 
-	const bool bRootMotionEnabled = !bAbilityRootMotionSuppressed;
-	AnimInstance->bRootMotionEnabled = bRootMotionEnabled;
-	AnimInstance->SetRootMotionMode(bRootMotionEnabled
-		? ERootMotionMode::RootMotionFromMontagesOnly
-		: ERootMotionMode::IgnoreRootMotion);
+	AnimInstance->bRootMotionEnabled = !bAbilityRootMotionSuppressed;
+	AnimInstance->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
 }
 
 void USyncAbilityMotionCharacterMovementComponent::SetAbilityMovementInputSuppressed(bool bInSuppressed)
 {
-	if (bAbilityMovementInputSuppressed == bInSuppressed) return;
+	if (bAbilityMovementInputSuppressed == bInSuppressed)
+	{
+		return;
+	}
 
 	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
 	{
@@ -263,11 +273,15 @@ void USyncAbilityMotionCharacterMovementComponent::SetAbilityMovementInputSuppre
 	}
 
 	bAbilityMovementInputSuppressed = bInSuppressed;
+	RefreshPredictedAbilityCorrectionTolerance();
 }
 
 void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionPausedByCharacterImpact(bool bInPaused)
 {
-	if (bAbilityRootMotionPausedByCharacterImpact == bInPaused) return;
+	if (bAbilityRootMotionPausedByCharacterImpact == bInPaused)
+	{
+		return;
+	}
 
 	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
 	{
@@ -281,6 +295,7 @@ void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionPausedByC
 	}
 
 	bAbilityRootMotionPausedByCharacterImpact = bInPaused;
+	RefreshPredictedAbilityCorrectionTolerance();
 }
 
 void USyncAbilityMotionCharacterMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
@@ -298,6 +313,8 @@ void USyncAbilityMotionCharacterMovementComponent::UpdateFromCompressedFlags(uin
 		SetAbilityMovementInputSuppressed(bNewInputSuppressed);
 		SetAbilityRootMotionPausedByCharacterImpact(bNewAbilityRootMotionPaused);
 	}
+
+	RefreshPredictedAbilityCorrectionTolerance();
 }
 
 FNetworkPredictionData_Client* USyncAbilityMotionCharacterMovementComponent::GetPredictionData_Client() const
@@ -312,6 +329,64 @@ FNetworkPredictionData_Client* USyncAbilityMotionCharacterMovementComponent::Get
 	}
 
 	return ClientPredictionData;
+}
+
+bool USyncAbilityMotionCharacterMovementComponent::ShouldUsePredictedAbilityCorrectionTolerance() const
+{
+	if (!CharacterOwner || !CharacterOwner->HasAuthority() || CharacterOwner->IsLocallyControlled())
+	{
+		return false;
+	}
+
+	const bool bInAbilityMoveWindow =
+		bAbilityMovementInputSuppressed ||
+		bAbilityRootMotionSuppressed ||
+		bAbilityRootMotionPausedByCharacterImpact;
+
+	if (!bInAbilityMoveWindow)
+	{
+		return false;
+	}
+
+	const USkeletalMeshComponent* MeshComp = CharacterOwner->GetMesh();
+	const UAnimInstance* AnimInstance = MeshComp ? MeshComp->GetAnimInstance() : nullptr;
+	const UAnimMontage* Montage = AnimInstance ? AnimInstance->GetCurrentActiveMontage() : nullptr;
+
+	return Montage && Montage->GetFName() == FName(TEXT("AM_Rush"));
+}
+
+void USyncAbilityMotionCharacterMovementComponent::RefreshPredictedAbilityCorrectionTolerance()
+{
+	const bool bEnable = ShouldUsePredictedAbilityCorrectionTolerance();
+
+	bIgnoreClientMovementErrorChecksAndCorrection = bEnable;
+	bServerAcceptClientAuthoritativePosition = bEnable;
+}
+
+FVector USyncAbilityMotionCharacterMovementComponent::ConstrainAnimRootMotionVelocity(
+	const FVector& RootMotionVelocity,
+	const FVector& CurrentVelocity) const
+{
+	FVector Result = Super::ConstrainAnimRootMotionVelocity(RootMotionVelocity, CurrentVelocity);
+
+	if (!bAbilityRootMotionSuppressed)
+	{
+		return Result;
+	}
+
+	Result.X = 0.f;
+	Result.Y = 0.f;
+
+	if (IsMovingOnGround())
+	{
+		Result.Z = 0.f;
+	}
+	else
+	{
+		Result.Z = CurrentVelocity.Z;
+	}
+
+	return Result;
 }
 
 void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(

@@ -21,16 +21,13 @@ void USyncAbilityMotionComponent::GetLifetimeReplicatedProps(TArray<FLifetimePro
 
 void USyncAbilityMotionComponent::SetAbilityMotionState(const FSyncAbilityMotionState& NewState)
 {
-	if (AbilityMotionState == NewState) return;
+	if (AbilityMotionState == NewState)
+	{
+		return;
+	}
 
 	AbilityMotionState = NewState;
 	ApplyAbilityMotionState(NewState);
-
-	ACharacter* Character = GetOwnerCharacter();
-	if (Character && !Character->HasAuthority())
-	{
-		ServerSetAbilityMotionState(NewState);
-	}
 }
 
 void USyncAbilityMotionComponent::ResetAbilityMotionState()

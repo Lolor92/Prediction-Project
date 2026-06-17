@@ -13,6 +13,8 @@ public:
 	void SetAbilityRootMotionSuppressed(const bool bInSuppressed);
 	bool IsAbilityRootMotionSuppressed() const { return bAbilityRootMotionSuppressed; }
 	void RefreshAbilityRootMotionMode();
+	bool ShouldUsePredictedAbilityCorrectionTolerance() const;
+	void RefreshPredictedAbilityCorrectionTolerance();
 
 	void SetAbilityMovementInputSuppressed(bool bInSuppressed);
 	bool IsAbilityMovementInputSuppressed() const { return bAbilityMovementInputSuppressed; }
@@ -23,6 +25,8 @@ public:
 	virtual float GetMaxSpeed() const override;
 	virtual void UpdateFromCompressedFlags(uint8 Flags) override;
 	virtual FVector ScaleInputAcceleration(const FVector& InputAcceleration) const override;
+	virtual FVector ConstrainAnimRootMotionVelocity(const FVector& RootMotionVelocity,
+		const FVector& CurrentVelocity) const override;
 	virtual class FNetworkPredictionData_Client* GetPredictionData_Client() const override;
 	virtual void SmoothCorrection(const FVector& OldLocation, const FQuat& OldRotation,
 		const FVector& NewLocation, const FQuat& NewRotation) override;
