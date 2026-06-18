@@ -142,6 +142,15 @@ void USyncAbilityMotionComponent::ApplyAbilityMotionState(const FSyncAbilityMoti
 
 	if (MoveComp)
 	{
+		// If the replicated/multicast ability state says movement is released,
+		// also clear any leftover reaction movement lock on simulated proxies.
+		// Escape clears this on owner/server during activation, but simulated proxies
+		// do not run that activation path.
+		if (!NewState.bMovementInputSuppressed)
+		{
+			MoveComp->EndReactionMovementInputLock();
+		}
+
 		MoveComp->SetAbilityRootMotionPausedByCharacterImpact(bPausedByCharacterImpact);
 		MoveComp->SetAbilityRootMotionSuppressed(bRootMotionSuppressed);
 		MoveComp->SetAbilityMovementInputSuppressed(NewState.bMovementInputSuppressed);

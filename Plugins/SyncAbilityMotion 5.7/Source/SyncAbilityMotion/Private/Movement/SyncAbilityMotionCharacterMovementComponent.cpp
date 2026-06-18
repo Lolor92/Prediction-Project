@@ -64,7 +64,7 @@ namespace
 		const FRotator ActorRotation = Character ? Character->GetActorRotation() : FRotator::ZeroRotator;
 
 		return FString::Printf(
-			TEXT("Character=%s Local=%s Authority=%s Loc=%s Rot=%s Vel=%s Accel=%s Mode=%d RootSuppressed=%s InputSuppressed=%s RootPausedImpact=%s HasAnimRootMotion=%s HasRootMotionSources=%s Smoothing=%d %s"),
+			TEXT("Character=%s Local=%s Authority=%s Loc=%s Rot=%s Vel=%s Accel=%s Mode=%d RootSuppressed=%s InputSuppressed=%s ReactionLocked=%s RootPausedImpact=%s HasAnimRootMotion=%s HasRootMotionSources=%s Smoothing=%d %s"),
 			*GetNameSafe(Character),
 			BoolText(Character && Character->IsLocallyControlled()),
 			BoolText(Character && Character->HasAuthority()),
@@ -75,6 +75,7 @@ namespace
 			MoveComp ? static_cast<int32>(MoveComp->MovementMode) : -1,
 			BoolText(MoveComp && MoveComp->IsAbilityRootMotionSuppressed()),
 			BoolText(MoveComp && MoveComp->IsAbilityMovementInputSuppressed()),
+			BoolText(MoveComp && MoveComp->IsReactionMovementInputLocked()),
 			BoolText(MoveComp && MoveComp->IsAbilityRootMotionPausedByCharacterImpact()),
 			BoolText(MoveComp && MoveComp->HasAnimRootMotion()),
 			BoolText(MoveComp && MoveComp->HasRootMotionSources()),
@@ -342,6 +343,11 @@ void USyncAbilityMotionCharacterMovementComponent::BeginReactionMovementInputLoc
 
 void USyncAbilityMotionCharacterMovementComponent::EndReactionMovementInputLock()
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReactionMovementInputLockTimerHandle);
+	}
+
 	if (!bReactionMovementInputLocked)
 	{
 		return;

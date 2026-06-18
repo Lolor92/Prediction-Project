@@ -14,6 +14,16 @@ void UPL_AnimInstance::NativeInitializeAnimation()
 void UPL_AnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
 	Super::NativeUpdateAnimation(DeltaSeconds);
+
+	const bool bAbilityReleasedToLowerBody =
+		bCanBlendMontage &&
+		bShouldBlendLowerBody &&
+		!bRootMotionEnabled;
+
+	if (bAbilityReleasedToLowerBody)
+	{
+		return;
+	}
 	
 	float LockedGroundSpeed = GroundSpeed;
 	bool bLockedIsAccelerating = bIsAccelerating;
