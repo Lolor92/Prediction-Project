@@ -1,5 +1,6 @@
 #include "Ability/SyncAbilityMotionGameplayAbility.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystemInterface.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Component/SyncAbilityMotionComponent.h"
@@ -8,6 +9,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
+#include "GameplayTagContainer.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -582,6 +584,21 @@ bool USyncAbilityMotionGameplayAbility::ShouldPauseRootMotionOnCharacterImpact(
 	const FVector& MoveDelta) const
 {
 	if (!bPauseRootMotionOnCharacterImpact || !Character)
+	{
+		return false;
+	}
+
+	const IAbilitySystemInterface* AbilitySystemInterface = Cast<IAbilitySystemInterface>(Character);
+	const UAbilitySystemComponent* ASC = AbilitySystemInterface
+		? AbilitySystemInterface->GetAbilitySystemComponent()
+		: nullptr;
+
+	const FGameplayTag IgnoreBodyCollisionTag = FGameplayTag::RequestGameplayTag(
+		FName("State.Collision.IgnoreBody"),
+		false
+	);
+
+	if (ASC && IgnoreBodyCollisionTag.IsValid() && ASC->HasMatchingGameplayTag(IgnoreBodyCollisionTag))
 	{
 		return false;
 	}

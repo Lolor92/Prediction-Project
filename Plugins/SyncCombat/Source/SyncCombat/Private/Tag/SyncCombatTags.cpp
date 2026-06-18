@@ -27,6 +27,8 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_State_CC_Rooted, "State.CC.Rooted");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_CC_Stunned, "State.CC.Stunned");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat, "State.Combat");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Attacking, "State.Combat.Attacking");
+UE_DEFINE_GAMEPLAY_TAG(TAG_State_Collision, "State.Collision");
+UE_DEFINE_GAMEPLAY_TAG(TAG_State_Collision_IgnoreBody, "State.Collision.IgnoreBody");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Movement, "State.Movement");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Movement_Airborne, "State.Movement.Airborne");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Reaction, "State.Reaction");
