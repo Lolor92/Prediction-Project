@@ -225,16 +225,10 @@ void USyncAbilityMotionAnimInstance::UpdateAbilityMotionReplication()
 		SyncMoveComp->SetAbilityMovementInputSuppressed(false);
 	}
 
-	const bool bShouldPauseByCharacterProbe =
-		!bReleaseWasAlreadyReached &&
-		Ability->ShouldPauseRootMotionForCharacterCollision(Character);
-
 	const bool bPausedByCharacterCollision =
 		!bReleaseWasAlreadyReached &&
-		(
-			bShouldPauseByCharacterProbe ||
-			(SyncMoveComp && SyncMoveComp->IsAbilityRootMotionPausedByCharacterImpact())
-		);
+		SyncMoveComp &&
+		SyncMoveComp->IsAbilityRootMotionPausedByCharacterImpact();
 
 	if (!bReleaseWasAlreadyReached && SyncMoveComp)
 	{

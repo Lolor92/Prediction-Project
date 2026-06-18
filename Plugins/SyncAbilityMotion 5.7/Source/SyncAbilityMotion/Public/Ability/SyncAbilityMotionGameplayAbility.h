@@ -64,8 +64,10 @@ public:
 	bool DoesAbilityUseGameplayTag(FGameplayTag GameplayTag) const;
 
 	uint32 GetActivationSequenceId() const { return ActivationSequenceId; }
-	bool ShouldPauseRootMotionForCharacterCollision(const ACharacter* Character) const;
-	bool ShouldPauseRootMotionOnCharacterImpact() const { return bPauseRootMotionOnCharacterImpact; }
+	bool ShouldPauseRootMotionOnCharacterImpact(
+		const ACharacter* Character,
+		const FHitResult& Hit,
+		const FVector& MoveDelta) const;
 	bool ShouldUsePredictedMovementCorrectionTolerance() const
 	{
 		return bUsePredictedMovementCorrectionTolerance;
@@ -102,9 +104,6 @@ protected:
 	void CloseComboWindow();
 
 	UPROPERTY(EditDefaultsOnly, Category="Ability|Root Motion")
-	bool bPauseRootMotionOnCharacterCollision = false;
-
-	UPROPERTY(EditDefaultsOnly, Category="Ability|Root Motion")
 	bool bPauseRootMotionOnCharacterImpact = true;
 
 	UPROPERTY(EditDefaultsOnly, Category="Ability|Prediction", meta=(
@@ -113,13 +112,10 @@ protected:
 	))
 	bool bUsePredictedMovementCorrectionTolerance = false;
 
-	UPROPERTY(EditDefaultsOnly, Category="Ability|Root Motion", meta=(EditCondition="bPauseRootMotionOnCharacterCollision",
+	UPROPERTY(EditDefaultsOnly, Category="Ability|Root Motion",
+		meta=(EditCondition="bPauseRootMotionOnCharacterImpact",
 		ClampMin="0.0", ClampMax="180.0", UIMin="0.0", UIMax="180.0", Units="Degrees"))
-	float RootMotionCharacterCollisionForwardAngleDegrees = 40.f;
-
-	UPROPERTY(EditDefaultsOnly, Category="Ability|Root Motion", meta=(EditCondition="bPauseRootMotionOnCharacterCollision",
-		ClampMin="0.0", UIMin="0.0", Units="cm"))
-	float RootMotionCharacterCollisionProbeDistance = 25.f;
+	float RootMotionCharacterImpactForwardAngleDegrees = 40.f;
 
 private:
 	void ResetComboWindow();

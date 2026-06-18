@@ -6,7 +6,6 @@
 #include "Components/ActorComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Engine/World.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 #include "GameFramework/Character.h"
@@ -551,96 +550,80 @@ void USyncAbilityMotionGameplayAbility::RemoveGameplayEffectsFromSelf(
 	}
 }
 
-bool USyncAbilityMotionGameplayAbility::ShouldPauseRootMotionForCharacterCollision(const ACharacter* Character) const
+bool USyncAbilityMotionGameplayAbility::ShouldPauseRootMotionOnCharacterImpact(
+	const ACharacter* Character,
+	const FHitResult& Hit,
+	const FVector& MoveDelta) const
 {
-	if (!bPauseRootMotionOnCharacterCollision || !Character) return false;
+	if (!bPauseRootMotionOnCharacterImpact || !Character)
+	{
+		return false;
+	}
 
-	UWorld* World = Character->GetWorld();
-	const UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
-	if (!World || !Capsule) return false;
+	const ACharacter* OtherCharacter = Cast<ACharacter>(Hit.GetActor());
+	if (!OtherCharacter || OtherCharacter == Character)
+	{
+		return false;
+	}
 
-	const UCharacterMovementComponent* MovementComponent = Character->GetCharacterMovement();
-	const float FrameMoveDistance = MovementComponent
-		? MovementComponent->Velocity.Size2D() * World->GetDeltaSeconds()
-		: 0.f;
+	const UPrimitiveComponent* OtherComp = Hit.GetComponent();
+	if (OtherComp)
+	{
+		const bool bIsCapsule = OtherComp->IsA<UCapsuleComponent>();
+		const bool bIsMesh = OtherComp->IsA<USkeletalMeshComponent>();
 
-	const float ProbeDistance = FMath::Max(
-		RootMotionCharacterCollisionProbeDistance,
-		FrameMoveDistance + Capsule->GetScaledCapsuleRadius());
-	if (ProbeDistance <= KINDA_SMALL_NUMBER) return false;
+		if (!bIsCapsule && !bIsMesh)
+		{
+			return false;
+		}
+	}
 
-	FVector Forward = MovementComponent ? MovementComponent->Velocity : FVector::ZeroVector;
+	FVector Forward = MoveDelta;
 	Forward.Z = 0.f;
+
+	if (!Forward.Normalize())
+	{
+		if (const UCharacterMovementComponent* MovementComponent = Character->GetCharacterMovement())
+		{
+			Forward = MovementComponent->Velocity;
+			Forward.Z = 0.f;
+		}
+	}
+
 	if (!Forward.Normalize())
 	{
 		Forward = Character->GetActorForwardVector();
 		Forward.Z = 0.f;
-		if (!Forward.Normalize()) return false;
 	}
 
-	const FVector Start = Capsule->GetComponentLocation();
-	const FVector End = Start + Forward * ProbeDistance;
-	const FCollisionShape CollisionShape = FCollisionShape::MakeCapsule(
-		Capsule->GetScaledCapsuleRadius(),
-		Capsule->GetScaledCapsuleHalfHeight());
+	if (!Forward.Normalize())
+	{
+		return false;
+	}
 
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(SyncAbilityMotionCharacterCollisionProbe), false, Character);
-	QueryParams.AddIgnoredActor(Character);
+	FVector ToImpact = Hit.ImpactPoint - Character->GetActorLocation();
+	ToImpact.Z = 0.f;
 
-	FCollisionObjectQueryParams ObjectQueryParams;
-	ObjectQueryParams.AddObjectTypesToQuery(ECC_Pawn);
+	if (Hit.bStartPenetrating || ToImpact.IsNearlyZero())
+	{
+		ToImpact = OtherCharacter->GetActorLocation() - Character->GetActorLocation();
+		ToImpact.Z = 0.f;
+	}
 
-	TArray<FHitResult> Hits;
-	const bool bFoundHit = World->SweepMultiByObjectType(
-		Hits,
-		Start,
-		End,
-		Capsule->GetComponentQuat(),
-		ObjectQueryParams,
-		CollisionShape,
-		QueryParams);
-
-	if (!bFoundHit) return false;
+	if (!ToImpact.Normalize())
+	{
+		return false;
+	}
 
 	const float ClampedAngleDegrees = FMath::Clamp(
-		RootMotionCharacterCollisionForwardAngleDegrees,
+		RootMotionCharacterImpactForwardAngleDegrees,
 		0.f,
 		180.f);
+
 	const float MinForwardDot = FMath::Cos(FMath::DegreesToRadians(ClampedAngleDegrees));
+	const float ForwardDot = FVector::DotProduct(Forward, ToImpact);
 
-	for (const FHitResult& Hit : Hits)
-	{
-		if (!Hit.bBlockingHit && !Hit.bStartPenetrating) continue;
-
-		const ACharacter* OtherCharacter = Cast<ACharacter>(Hit.GetActor());
-		if (!OtherCharacter || OtherCharacter == Character) continue;
-
-		const UPrimitiveComponent* OtherComp = Hit.GetComponent();
-		if (OtherComp)
-		{
-			const bool bIsCapsule = OtherComp->IsA<UCapsuleComponent>();
-			const bool bIsMesh = OtherComp->IsA<USkeletalMeshComponent>();
-			if (!bIsCapsule && !bIsMesh) continue;
-		}
-
-		FVector HitPoint = Hit.ImpactPoint;
-		if (Hit.bStartPenetrating || HitPoint.IsNearlyZero())
-		{
-			HitPoint = OtherCharacter->GetActorLocation();
-		}
-
-		FVector ToHit = HitPoint - Character->GetActorLocation();
-		ToHit.Z = 0.f;
-		if (!ToHit.Normalize()) continue;
-
-		const float ForwardDot = FVector::DotProduct(Forward, ToHit);
-		if (ForwardDot >= MinForwardDot)
-		{
-			return true;
-		}
-	}
-
-	return false;
+	return ForwardDot >= MinForwardDot;
 }
 
 void USyncAbilityMotionGameplayAbility::RotateAvatarToControllerYawOnActivate() const

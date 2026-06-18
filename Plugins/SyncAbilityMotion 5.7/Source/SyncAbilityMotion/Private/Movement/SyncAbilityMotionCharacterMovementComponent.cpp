@@ -111,10 +111,14 @@ namespace
 		return Cast<USyncAbilityMotionGameplayAbility>(AnimatingAbility);
 	}
 
-	bool ShouldPauseRootMotionOnCharacterImpact(const USyncAbilityMotionCharacterMovementComponent* MoveComp)
+	bool ShouldPauseRootMotionOnCharacterImpact(
+		const USyncAbilityMotionCharacterMovementComponent* MoveComp,
+		const ACharacter* Character,
+		const FHitResult& Hit,
+		const FVector& MoveDelta)
 	{
 		const USyncAbilityMotionGameplayAbility* Ability = GetAnimatingSyncAbilityMotionAbility(MoveComp);
-		return Ability && Ability->ShouldPauseRootMotionOnCharacterImpact();
+		return Ability && Ability->ShouldPauseRootMotionOnCharacterImpact(Character, Hit, MoveDelta);
 	}
 
 	bool ShouldUsePredictedMovementCorrectionTolerance(
@@ -774,10 +778,10 @@ FVector USyncAbilityMotionCharacterMovementComponent::ScaleInputAcceleration(con
 void USyncAbilityMotionCharacterMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSlice,
 	const FVector& MoveDelta)
 {
-	if (Cast<ACharacter>(Hit.GetActor())
-		&& !bAbilityRootMotionSuppressed
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!bAbilityRootMotionSuppressed
 		&& bAbilityMovementInputSuppressed
-		&& ShouldPauseRootMotionOnCharacterImpact(this))
+		&& ShouldPauseRootMotionOnCharacterImpact(this, Character, Hit, MoveDelta))
 	{
 		if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
 		{
