@@ -369,16 +369,23 @@ void USyncAbilityMotionCharacterMovementComponent::EndReactionMovementInputLock(
 
 void USyncAbilityMotionCharacterMovementComponent::BeginPredictedProxyReaction(float Duration)
 {
-	// If another predicted proxy reaction was already active, finish it first.
-	// Otherwise old deferred corrections can linger and the capsule/mesh can drift apart.
+	// Chained hit case:
+	// A new reaction can start while the old reaction's visual mesh offset is still blending.
+	// Do not end by restoring old capsule state or snapping the mesh.
+	// Just rebase/carry whatever visual offset currently exists.
 	if (bPredictedProxyReactionActive)
 	{
-		EndPredictedProxyReaction();
+		CollapsePredictedProxyMeshOffsetToCurrent();
 	}
 
 	bPredictedProxyReactionActive = true;
-	bHasDeferredPredictedProxyCorrection = false;
 	bAcceptedPredictedProxyReactionCorrection = false;
+	bHasDeferredPredictedProxyCorrection = false;
+
+	if (NetworkSmoothingMode == ENetworkSmoothingMode::Disabled)
+	{
+		NetworkSmoothingMode = ENetworkSmoothingMode::Exponential;
+	}
 
 	if (UWorld* World = GetWorld())
 	{
@@ -401,37 +408,20 @@ void USyncAbilityMotionCharacterMovementComponent::EndPredictedProxyReaction()
 
 	bPredictedProxyReactionActive = false;
 	bAcceptedPredictedProxyReactionCorrection = false;
+	bHasDeferredPredictedProxyCorrection = false;
+	bHasPredictedProxyMeshVisualOffset = false;
 
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(PredictedProxyReactionTimerHandle);
 	}
 
-	if (bHasDeferredPredictedProxyCorrection)
-	{
-		bHasDeferredPredictedProxyCorrection = false;
-
-		if (UpdatedComponent)
-		{
-			UpdatedComponent->SetWorldLocationAndRotation(
-				DeferredPredictedProxyCorrectionLocation,
-				DeferredPredictedProxyCorrectionRotation,
-				false,
-				nullptr,
-				ETeleportType::TeleportPhysics);
-		}
-		else if (CharacterOwner)
-		{
-			CharacterOwner->SetActorLocationAndRotation(
-				DeferredPredictedProxyCorrectionLocation,
-				DeferredPredictedProxyCorrectionRotation,
-				false,
-				nullptr,
-				ETeleportType::TeleportPhysics);
-		}
-
-		ResetPredictedProxyMeshToCapsule();
-	}
+	// Important:
+	// Do not apply DeferredPredictedProxyCorrectionLocation here.
+	// Do not call ResetPredictedProxyMeshToCapsule() here.
+	//
+	// The capsule should already have accepted server correction through SmoothCorrection.
+	// Any mesh visual offset should be allowed to drain through normal network smoothing.
 }
 
 void USyncAbilityMotionCharacterMovementComponent::ResetPredictedProxyMeshToCapsule()
@@ -455,7 +445,118 @@ void USyncAbilityMotionCharacterMovementComponent::ResetPredictedProxyMeshToCaps
 		nullptr,
 		ETeleportType::TeleportPhysics);
 
+	if (FNetworkPredictionData_Client_Character* ClientData = GetPredictionData_Client_Character())
+	{
+		ClientData->MeshTranslationOffset = FVector::ZeroVector;
+	}
+
 	bNetworkSmoothingComplete = true;
+	bHasPredictedProxyMeshVisualOffset = false;
+}
+
+void USyncAbilityMotionCharacterMovementComponent::ApplyPredictedProxyMeshVisualOffsetFromCapsuleDelta(
+	const FVector& OldCapsuleLocation,
+	const FVector& NewCapsuleLocation,
+	float CorrectionDist2D)
+{
+	if (!CharacterOwner)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* Mesh = CharacterOwner->GetMesh();
+	if (!Mesh)
+	{
+		return;
+	}
+
+	FNetworkPredictionData_Client_Character* ClientData = GetPredictionData_Client_Character();
+	if (!ClientData)
+	{
+		return;
+	}
+
+	// Cancel the capsule correction visually.
+	// Capsule is already corrected by Super::SmoothCorrection.
+	// This offset is cosmetic only.
+	FVector VisualOffset = OldCapsuleLocation - NewCapsuleLocation;
+
+	if (bPredictedProxyReactionPlanarVisualOffsetOnly)
+	{
+		VisualOffset.Z = 0.f;
+	}
+
+	if (VisualOffset.IsNearlyZero(0.1f))
+	{
+		bHasPredictedProxyMeshVisualOffset = false;
+		return;
+	}
+
+	const float MaxOffset = FMath::Max(PredictedProxyReactionMaxMeshOffset, 0.f);
+	if (MaxOffset > 0.f && VisualOffset.SizeSquared() > FMath::Square(MaxOffset))
+	{
+		VisualOffset = VisualOffset.GetSafeNormal() * MaxOffset;
+	}
+
+	// Single authoritative visual offset for this correction.
+	// Do not add ExistingOffset + VisualOffset.
+	ClientData->MeshTranslationOffset = VisualOffset;
+
+	NetworkSimulatedSmoothLocationTime =
+		FMath::Max(PredictedProxyReactionMeshOffsetSmoothTime, 0.01f);
+
+	bNetworkSmoothingComplete = false;
+	bHasPredictedProxyMeshVisualOffset = true;
+
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("ApplyPredictedProxyMeshVisualOffset Dist=%.2f Offset=%s OldCapsule=%s NewCapsule=%s %s"),
+			CorrectionDist2D,
+			*VisualOffset.ToCompactString(),
+			*OldCapsuleLocation.ToCompactString(),
+			*NewCapsuleLocation.ToCompactString(),
+			*DescribeMovementState(this));
+	}
+}
+
+void USyncAbilityMotionCharacterMovementComponent::CollapsePredictedProxyMeshOffsetToCurrent()
+{
+	FNetworkPredictionData_Client_Character* ClientData = GetPredictionData_Client_Character();
+	if (!ClientData)
+	{
+		bHasPredictedProxyMeshVisualOffset = false;
+		return;
+	}
+
+	FVector CurrentOffset = ClientData->MeshTranslationOffset;
+
+	if (bPredictedProxyReactionPlanarVisualOffsetOnly)
+	{
+		CurrentOffset.Z = 0.f;
+	}
+
+	const float MaxOffset = FMath::Max(PredictedProxyReactionMaxMeshOffset, 0.f);
+	if (MaxOffset > 0.f && CurrentOffset.SizeSquared() > FMath::Square(MaxOffset))
+	{
+		CurrentOffset = CurrentOffset.GetSafeNormal() * MaxOffset;
+		ClientData->MeshTranslationOffset = CurrentOffset;
+	}
+
+	bHasPredictedProxyMeshVisualOffset = !CurrentOffset.IsNearlyZero(0.1f);
+	bNetworkSmoothingComplete = false;
+
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("CollapsePredictedProxyMeshOffsetToCurrent Offset=%s %s"),
+			*CurrentOffset.ToCompactString(),
+			*DescribeMovementState(this));
+	}
 }
 
 void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionPausedByCharacterImpact(bool bInPaused)
@@ -643,62 +744,8 @@ void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(
 
 	if (bPredictedProxyReaction)
 	{
-		const bool bShouldDeferProxyReactionCorrection =
-			!bAcceptedPredictedProxyReactionCorrection &&
-			CorrectionDist2D <= PredictedProxyReactionMaxDeferredCorrectionDistance;
-
-		if (bShouldDeferProxyReactionCorrection)
-		{
-			DeferredPredictedProxyCorrectionLocation = NewLocation;
-			DeferredPredictedProxyCorrectionRotation = NewRotation;
-			bHasDeferredPredictedProxyCorrection = true;
-
-			// By the time SmoothCorrection is called, the component may already be at NewLocation.
-			// Put it back to the predicted location so the server correction is truly deferred.
-			if (UpdatedComponent)
-			{
-				UpdatedComponent->SetWorldLocationAndRotation(
-					OldLocation,
-					OldRotation,
-					false,
-					nullptr,
-					ETeleportType::TeleportPhysics);
-			}
-			else if (CharacterOwner)
-			{
-				CharacterOwner->SetActorLocationAndRotation(
-					OldLocation,
-					OldRotation,
-					false,
-					nullptr,
-					ETeleportType::TeleportPhysics);
-			}
-
-			ResetPredictedProxyMeshToCapsule();
-
-			if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
-			{
-				const FVector CurrentLoc = UpdatedComponent
-					? UpdatedComponent->GetComponentLocation()
-					: (CharacterOwner ? CharacterOwner->GetActorLocation() : FVector::ZeroVector);
-
-				UE_LOG(
-					LogSyncAbilityMotionMoveDiag,
-					Warning,
-					TEXT("SmoothCorrection deferred for predicted proxy reaction Dist=%.2f OldLoc=%s NewLoc=%s CurrentLocAfterRestore=%s AcceptedLargeCorrection=%s %s"),
-					CorrectionDist2D,
-					*OldLocation.ToCompactString(),
-					*NewLocation.ToCompactString(),
-					*CurrentLoc.ToCompactString(),
-					bAcceptedPredictedProxyReactionCorrection ? TEXT("true") : TEXT("false"),
-					*DescribeMovementState(this));
-			}
-
-			return;
-		}
-
-		// Once a correction is too large to defer, keep accepting corrections for the
-		// rest of this reaction. Otherwise we get accept -> restore -> accept -> restore.
+		// Capsule / UpdatedComponent must accept the server correction.
+		// Mesh smoothing is cosmetic only.
 		bAcceptedPredictedProxyReactionCorrection = true;
 		bHasDeferredPredictedProxyCorrection = false;
 
@@ -707,15 +754,23 @@ void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(
 			UE_LOG(
 				LogSyncAbilityMotionMoveDiag,
 				Warning,
-				TEXT("SmoothCorrection accepted for predicted proxy reaction Dist=%.2f OldLoc=%s NewLoc=%s AcceptedLargeCorrection=%s %s"),
+				TEXT("SmoothCorrection predicted proxy reaction accepting capsule correction Dist=%.2f OldLoc=%s NewLoc=%s %s"),
 				CorrectionDist2D,
 				*OldLocation.ToCompactString(),
 				*NewLocation.ToCompactString(),
-				bAcceptedPredictedProxyReactionCorrection ? TEXT("true") : TEXT("false"),
 				*DescribeMovementState(this));
 		}
 
 		Super::SmoothCorrection(OldLocation, OldRotation, NewLocation, NewRotation);
+
+		if (CorrectionDist2D > PredictedProxyReactionMeshOffsetThreshold)
+		{
+			ApplyPredictedProxyMeshVisualOffsetFromCapsuleDelta(
+				OldLocation,
+				NewLocation,
+				CorrectionDist2D);
+		}
+
 		return;
 	}
 

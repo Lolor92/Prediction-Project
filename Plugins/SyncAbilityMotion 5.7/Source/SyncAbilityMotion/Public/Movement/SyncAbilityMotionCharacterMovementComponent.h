@@ -25,6 +25,11 @@ public:
 	void BeginPredictedProxyReaction(float Duration);
 	void EndPredictedProxyReaction();
 	void ResetPredictedProxyMeshToCapsule();
+	void ApplyPredictedProxyMeshVisualOffsetFromCapsuleDelta(
+		const FVector& OldCapsuleLocation,
+		const FVector& NewCapsuleLocation,
+		float CorrectionDist2D);
+	void CollapsePredictedProxyMeshOffsetToCurrent();
 	bool IsPredictedProxyReactionActive() const
 	{
 		return bPredictedProxyReactionActive;
@@ -98,12 +103,27 @@ private:
 	UPROPERTY(Transient)
 	bool bAcceptedPredictedProxyReactionCorrection = false;
 
+	UPROPERTY(Transient)
+	bool bHasPredictedProxyMeshVisualOffset = false;
+
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
 	float AbilityStopCorrectionSnapDistance = 8.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
 	float PredictedProxyReactionMaxDeferredCorrectionDistance = 30.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking", meta = (ClampMin = "0.0"))
+	float PredictedProxyReactionMeshOffsetThreshold = 4.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking", meta = (ClampMin = "0.0"))
+	float PredictedProxyReactionMaxMeshOffset = 120.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking", meta = (ClampMin = "0.01"))
+	float PredictedProxyReactionMeshOffsetSmoothTime = 0.12f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
+	bool bPredictedProxyReactionPlanarVisualOffsetOnly = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Directional Speed", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
 	float BackwardSpeedMultiplier = 0.6f;
