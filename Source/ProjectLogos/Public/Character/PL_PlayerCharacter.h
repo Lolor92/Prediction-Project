@@ -6,6 +6,7 @@
 
 class USpringArmComponent;
 class UCameraComponent;
+class USP_AbilityComponent;
 
 UCLASS()
 class PROJECTLOGOS_API APL_PlayerCharacter : public APL_BaseCharacter
@@ -24,6 +25,9 @@ public:
 	
 private:
 	void InitializeAbilitySystem();
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Sync Prediction", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USP_AbilityComponent> AbilityComponent = nullptr;
 
 	// Camera components.
 	UPROPERTY(VisibleAnywhere, Category="Camera")

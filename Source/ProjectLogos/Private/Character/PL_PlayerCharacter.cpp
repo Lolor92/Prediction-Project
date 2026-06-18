@@ -1,6 +1,7 @@
 ﻿#include "Character/PL_PlayerCharacter.h"
 #include "AbilitySystemComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Components/SP_AbilityComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Player/PL_PlayerState.h"
 
@@ -16,6 +17,8 @@ APL_PlayerCharacter::APL_PlayerCharacter()
 	Camera = CreateDefaultSubobject<UCameraComponent>("Camera");
 	Camera->SetupAttachment(SpringArm);
 	Camera->bUsePawnControlRotation = false;
+	
+	AbilityComponent = CreateDefaultSubobject<USP_AbilityComponent>(TEXT("Sync Ability Component"));
 }
 
 void APL_PlayerCharacter::PossessedBy(AController* NewController)
@@ -46,4 +49,9 @@ void APL_PlayerCharacter::InitializeAbilitySystem()
 	if (!AbilitySystemComponent) return;
 
 	AbilitySystemComponent->InitAbilityActorInfo(TB_PlayerState, this);
+	
+	if (AbilityComponent)
+	{
+		AbilityComponent->InitializeWithAbilitySystem(AbilitySystemComponent);
+	}
 }

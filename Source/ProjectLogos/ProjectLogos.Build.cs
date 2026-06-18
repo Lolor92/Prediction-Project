@@ -15,7 +15,8 @@ public class ProjectLogos : ModuleRules
 			"EnhancedInput",
 			"GameplayTags",
 			"GameplayAbilities",
-			"GameplayTasks"
+			"GameplayTasks",
+			"SyncPrediction"
 		});
 		
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
