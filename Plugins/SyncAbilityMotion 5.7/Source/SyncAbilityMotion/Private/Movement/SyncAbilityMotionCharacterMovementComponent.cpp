@@ -440,17 +440,49 @@ bool USyncAbilityMotionCharacterMovementComponent::ShouldUsePredictedAbilityCorr
 		bAbilityRootMotionSuppressed ||
 		bAbilityRootMotionPausedByCharacterImpact;
 
-	if (!bInAbilityMoveWindow)
+	// Existing path. Keep this for Rush, Shield Bash, big root-motion abilities.
+	if (bInAbilityMoveWindow && ShouldUsePredictedMovementCorrectionTolerance(this))
 	{
-		return false;
+		return true;
 	}
 
-	return ShouldUsePredictedMovementCorrectionTolerance(this);
+	// New path. This is only for victim hit reactions.
+	const bool bInReactionRootMotionWindow =
+		bReactionMovementInputLocked &&
+		IsAbilityMovementInputSuppressed() &&
+		(HasAnimRootMotion() || HasRootMotionSources());
+
+	if (bInReactionRootMotionWindow)
+	{
+		return true;
+	}
+
+	return false;
 }
 
 void USyncAbilityMotionCharacterMovementComponent::RefreshPredictedAbilityCorrectionTolerance()
 {
 	const bool bEnable = ShouldUsePredictedAbilityCorrectionTolerance();
+
+	if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+	{
+		const USyncAbilityMotionGameplayAbility* Ability = GetAnimatingSyncAbilityMotionAbility(this);
+
+		UE_LOG(
+			LogSyncAbilityMotionMoveDiag,
+			Warning,
+			TEXT("RefreshPredictedAbilityCorrectionTolerance Enable=%s AnimatingAbility=%s AbilityWantsTolerance=%s ReactionLocked=%s InputSuppressed=%s RootSuppressed=%s RootPausedImpact=%s HasAnimRootMotion=%s HasRootMotionSources=%s %s"),
+			BoolText(bEnable),
+			*GetNameSafe(Ability),
+			BoolText(Ability && Ability->ShouldUsePredictedMovementCorrectionTolerance()),
+			BoolText(bReactionMovementInputLocked),
+			BoolText(IsAbilityMovementInputSuppressed()),
+			BoolText(bAbilityRootMotionSuppressed),
+			BoolText(bAbilityRootMotionPausedByCharacterImpact),
+			BoolText(HasAnimRootMotion()),
+			BoolText(HasRootMotionSources()),
+			*DescribeMovementState(this));
+	}
 
 	bIgnoreClientMovementErrorChecksAndCorrection = bEnable;
 	bServerAcceptClientAuthoritativePosition = bEnable;
