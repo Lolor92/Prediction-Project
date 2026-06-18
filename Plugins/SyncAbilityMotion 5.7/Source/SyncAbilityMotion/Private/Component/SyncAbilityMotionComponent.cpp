@@ -28,6 +28,18 @@ void USyncAbilityMotionComponent::SetAbilityMotionState(const FSyncAbilityMotion
 
 	AbilityMotionState = NewState;
 	ApplyAbilityMotionState(NewState);
+
+	AActor* OwnerActor = GetOwner();
+	if (OwnerActor && OwnerActor->HasAuthority())
+	{
+		// The release-to-lower-body state is timing-sensitive.
+		// Do not wait for the actor's normal replication interval.
+		OwnerActor->ForceNetUpdate();
+
+		// Visual fast path for simulated proxies.
+		// The replicated AbilityMotionState remains the reliable eventual backup.
+		MulticastApplyAbilityMotionState(NewState);
+	}
 }
 
 void USyncAbilityMotionComponent::ResetAbilityMotionState()
@@ -54,7 +66,29 @@ void USyncAbilityMotionComponent::ResetAbilityMotionState()
 
 void USyncAbilityMotionComponent::ServerSetAbilityMotionState_Implementation(const FSyncAbilityMotionState& NewState)
 {
-	if (AbilityMotionState == NewState) return;
+	SetAbilityMotionState(NewState);
+}
+
+void USyncAbilityMotionComponent::MulticastApplyAbilityMotionState_Implementation(
+	const FSyncAbilityMotionState& NewState)
+{
+	ACharacter* Character = GetOwnerCharacter();
+	if (!Character)
+	{
+		return;
+	}
+
+	// Server already applied it.
+	if (Character->HasAuthority())
+	{
+		return;
+	}
+
+	// Owning client predicts this locally. Do not stomp it.
+	if (Character->IsLocallyControlled())
+	{
+		return;
+	}
 
 	AbilityMotionState = NewState;
 	ApplyAbilityMotionState(NewState);
@@ -93,6 +127,12 @@ void USyncAbilityMotionComponent::ApplyAbilityMotionState(const FSyncAbilityMoti
 
 	AnimInstance->bCanBlendMontage = NewState.bCanBlendMontage;
 	AnimInstance->bShouldBlendLowerBody = NewState.bShouldBlendLowerBody;
+	AnimInstance->bRootMotionEnabled = NewState.bRootMotionEnabled;
+
+	AnimInstance->SetRootMotionMode(
+		NewState.bRootMotionEnabled
+			? ERootMotionMode::RootMotionFromMontagesOnly
+			: ERootMotionMode::IgnoreRootMotion);
 
 	USyncAbilityMotionCharacterMovementComponent* MoveComp =
 		Cast<USyncAbilityMotionCharacterMovementComponent>(Character->GetCharacterMovement());
@@ -106,20 +146,7 @@ void USyncAbilityMotionComponent::ApplyAbilityMotionState(const FSyncAbilityMoti
 		MoveComp->SetAbilityRootMotionSuppressed(bRootMotionSuppressed);
 		MoveComp->SetAbilityMovementInputSuppressed(NewState.bMovementInputSuppressed);
 		MoveComp->RefreshAbilityRootMotionMode();
-
-		return;
 	}
-
-	if (Character->HasAuthority())
-	{
-		return;
-	}
-
-	AnimInstance->bRootMotionEnabled = NewState.bRootMotionEnabled;
-	AnimInstance->SetRootMotionMode(
-		NewState.bRootMotionEnabled
-			? ERootMotionMode::RootMotionFromMontagesOnly
-			: ERootMotionMode::IgnoreRootMotion);
 }
 
 ACharacter* USyncAbilityMotionComponent::GetOwnerCharacter() const

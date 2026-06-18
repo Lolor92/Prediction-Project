@@ -48,8 +48,21 @@ void USyncAbilityMotionAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 
 	if (!Character || !CharacterMovementComponent) return;
 
-	bIsAccelerating = CharacterMovementComponent->GetCurrentAcceleration().Size() > 0.f;
 	GroundSpeed = UKismetMathLibrary::VSizeXY(CharacterMovementComponent->Velocity);
+
+	const bool bHasAcceleration =
+		CharacterMovementComponent->GetCurrentAcceleration().SizeSquared2D() > FMath::Square(1.f);
+
+	const bool bIsSimulatedProxy =
+		!Character->IsLocallyControlled() && !Character->HasAuthority();
+
+	const bool bProxyReleasedLowerBodyWithVelocity =
+		bIsSimulatedProxy &&
+		bShouldBlendLowerBody &&
+		!bRootMotionEnabled &&
+		GroundSpeed > 3.f;
+
+	bIsAccelerating = bHasAcceleration || bProxyReleasedLowerBodyWithVelocity;
 	IsAirBorne = CharacterMovementComponent->IsFalling();
 
 	AimRotation = Character->GetBaseAimRotation();

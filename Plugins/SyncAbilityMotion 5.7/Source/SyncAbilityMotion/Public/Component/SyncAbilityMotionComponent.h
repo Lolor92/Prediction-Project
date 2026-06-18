@@ -32,6 +32,9 @@ protected:
 	UFUNCTION(Server, Reliable)
 	void ServerSetAbilityMotionState(const FSyncAbilityMotionState& NewState);
 
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastApplyAbilityMotionState(const FSyncAbilityMotionState& NewState);
+
 	UFUNCTION()
 	void OnRep_AbilityMotionState();
 
