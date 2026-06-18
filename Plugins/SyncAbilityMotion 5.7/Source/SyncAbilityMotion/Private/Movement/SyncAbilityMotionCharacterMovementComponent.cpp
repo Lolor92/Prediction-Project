@@ -367,6 +367,95 @@ void USyncAbilityMotionCharacterMovementComponent::EndReactionMovementInputLock(
 	RefreshPredictedAbilityCorrectionTolerance();
 }
 
+void USyncAbilityMotionCharacterMovementComponent::BeginPredictedProxyReaction(float Duration)
+{
+	// If another predicted proxy reaction was already active, finish it first.
+	// Otherwise old deferred corrections can linger and the capsule/mesh can drift apart.
+	if (bPredictedProxyReactionActive)
+	{
+		EndPredictedProxyReaction();
+	}
+
+	bPredictedProxyReactionActive = true;
+	bHasDeferredPredictedProxyCorrection = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PredictedProxyReactionTimerHandle);
+		World->GetTimerManager().SetTimer(
+			PredictedProxyReactionTimerHandle,
+			this,
+			&USyncAbilityMotionCharacterMovementComponent::EndPredictedProxyReaction,
+			FMath::Max(Duration, 0.05f),
+			false);
+	}
+}
+
+void USyncAbilityMotionCharacterMovementComponent::EndPredictedProxyReaction()
+{
+	if (!bPredictedProxyReactionActive)
+	{
+		return;
+	}
+
+	bPredictedProxyReactionActive = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PredictedProxyReactionTimerHandle);
+	}
+
+	if (bHasDeferredPredictedProxyCorrection)
+	{
+		bHasDeferredPredictedProxyCorrection = false;
+
+		if (UpdatedComponent)
+		{
+			UpdatedComponent->SetWorldLocationAndRotation(
+				DeferredPredictedProxyCorrectionLocation,
+				DeferredPredictedProxyCorrectionRotation,
+				false,
+				nullptr,
+				ETeleportType::TeleportPhysics);
+		}
+		else if (CharacterOwner)
+		{
+			CharacterOwner->SetActorLocationAndRotation(
+				DeferredPredictedProxyCorrectionLocation,
+				DeferredPredictedProxyCorrectionRotation,
+				false,
+				nullptr,
+				ETeleportType::TeleportPhysics);
+		}
+
+		ResetPredictedProxyMeshToCapsule();
+	}
+}
+
+void USyncAbilityMotionCharacterMovementComponent::ResetPredictedProxyMeshToCapsule()
+{
+	ACharacter* Character = CharacterOwner;
+	if (!Character)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* Mesh = Character->GetMesh();
+	if (!Mesh)
+	{
+		return;
+	}
+
+	Mesh->SetRelativeLocationAndRotation(
+		Character->GetBaseTranslationOffset(),
+		Character->GetBaseRotationOffset(),
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+
+	bNetworkSmoothingComplete = true;
+}
+
 void USyncAbilityMotionCharacterMovementComponent::SetAbilityRootMotionPausedByCharacterImpact(bool bInPaused)
 {
 	if (bAbilityRootMotionPausedByCharacterImpact == bInPaused)
@@ -540,6 +629,63 @@ void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(
 		CharacterOwner &&
 		!CharacterOwner->IsLocallyControlled() &&
 		!CharacterOwner->HasAuthority();
+
+	const bool bPredictedProxyReaction =
+		bIsSimulatedProxy &&
+		IsPredictedProxyReactionActive();
+
+	if (bPredictedProxyReaction)
+	{
+		DeferredPredictedProxyCorrectionLocation = NewLocation;
+		DeferredPredictedProxyCorrectionRotation = NewRotation;
+		bHasDeferredPredictedProxyCorrection = true;
+
+		// Safety valve: if the prediction is massively wrong, accept the server now.
+		if (CorrectionDist2D <= PredictedProxyReactionMaxDeferredCorrectionDistance)
+		{
+			// By the time SmoothCorrection is called, the component may already be at NewLocation.
+			// Put it back to the predicted location so the server correction is truly deferred.
+			if (UpdatedComponent)
+			{
+				UpdatedComponent->SetWorldLocationAndRotation(
+					OldLocation,
+					OldRotation,
+					false,
+					nullptr,
+					ETeleportType::TeleportPhysics);
+			}
+			else if (CharacterOwner)
+			{
+				CharacterOwner->SetActorLocationAndRotation(
+					OldLocation,
+					OldRotation,
+					false,
+					nullptr,
+					ETeleportType::TeleportPhysics);
+			}
+
+			ResetPredictedProxyMeshToCapsule();
+
+			if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+			{
+				const FVector CurrentLoc = UpdatedComponent
+					? UpdatedComponent->GetComponentLocation()
+					: (CharacterOwner ? CharacterOwner->GetActorLocation() : FVector::ZeroVector);
+
+				UE_LOG(
+					LogSyncAbilityMotionMoveDiag,
+					Warning,
+					TEXT("SmoothCorrection deferred for predicted proxy reaction Dist=%.2f OldLoc=%s NewLoc=%s CurrentLocAfterRestore=%s %s"),
+					CorrectionDist2D,
+					*OldLocation.ToCompactString(),
+					*NewLocation.ToCompactString(),
+					*CurrentLoc.ToCompactString(),
+					*DescribeMovementState(this));
+			}
+
+			return;
+		}
+	}
 
 	const bool bInAbilityStopWindow =
 		bAbilityRootMotionSuppressed ||

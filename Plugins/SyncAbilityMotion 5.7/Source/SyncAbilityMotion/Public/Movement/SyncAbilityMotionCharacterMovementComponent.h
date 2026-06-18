@@ -22,6 +22,13 @@ public:
 	void BeginReactionMovementInputLock(float Duration);
 	void EndReactionMovementInputLock();
 	bool IsReactionMovementInputLocked() const { return bReactionMovementInputLocked; }
+	void BeginPredictedProxyReaction(float Duration);
+	void EndPredictedProxyReaction();
+	void ResetPredictedProxyMeshToCapsule();
+	bool IsPredictedProxyReactionActive() const
+	{
+		return bPredictedProxyReactionActive;
+	}
 	bool IsAbilityMovementInputSuppressed() const
 	{
 		return bAbilityMovementInputSuppressed || bReactionMovementInputLocked;
@@ -74,9 +81,21 @@ private:
 
 	FTimerHandle ReactionMovementInputLockTimerHandle;
 
+	UPROPERTY(Transient)
+	bool bPredictedProxyReactionActive = false;
+
+	FTimerHandle PredictedProxyReactionTimerHandle;
+
+	bool bHasDeferredPredictedProxyCorrection = false;
+	FVector DeferredPredictedProxyCorrectionLocation = FVector::ZeroVector;
+	FQuat DeferredPredictedProxyCorrectionRotation = FQuat::Identity;
+
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
 	float AbilityStopCorrectionSnapDistance = 8.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
+	float PredictedProxyReactionMaxDeferredCorrectionDistance = 120.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Directional Speed", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
 	float BackwardSpeedMultiplier = 0.6f;

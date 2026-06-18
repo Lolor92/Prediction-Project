@@ -705,6 +705,26 @@ void USCP_CombatPredictionComponent::ConfirmTargetReaction(
 		return;
 	}
 
+	const bool bClientPredictedConfirmation =
+		!Context.bIsAuthority && Context.IsValidForPrediction();
+
+	if (bClientPredictedConfirmation && !MarkTargetProcessed(Context, TargetActor))
+	{
+		if (SyncCombatPrediction::IsDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncCombatPrediction,
+				Log,
+				TEXT("ConfirmReaction skipped Owner={%s} Target={%s} Montage=%s Reason=DuplicatePredictedConfirmation Context={%s}"),
+				*BuildActorDebugString(GetOwner()),
+				*BuildActorDebugString(TargetActor),
+				*GetNameSafe(ReactionMontage),
+				*Context.ToDebugString());
+		}
+
+		return;
+	}
+
 	Context.bIsAuthority = true;
 	Context.bIsLocallyControlled = false;
 
@@ -2363,6 +2383,15 @@ void USCP_CombatPredictionComponent::BeginPredictedTargetReaction(float Duration
 	}
 
 	++LocalPredictedTargetReactionCount;
+
+	if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
+	{
+		if (USyncAbilityMotionCharacterMovementComponent* MoveComp =
+			Cast<USyncAbilityMotionCharacterMovementComponent>(Character->GetCharacterMovement()))
+		{
+			MoveComp->BeginPredictedProxyReaction(Duration);
+		}
+	}
 
 	FTimerHandle TimerHandle;
 	World->GetTimerManager().SetTimer(
