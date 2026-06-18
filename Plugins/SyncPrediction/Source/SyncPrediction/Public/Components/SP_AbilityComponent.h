@@ -7,7 +7,6 @@
 #include "Data/SP_AbilitySet.h"
 #include "SP_AbilityComponent.generated.h"
 
-
 class UAbilitySystemComponent;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
