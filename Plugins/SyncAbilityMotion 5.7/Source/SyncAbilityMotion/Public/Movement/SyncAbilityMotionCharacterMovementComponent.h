@@ -86,16 +86,24 @@ private:
 
 	FTimerHandle PredictedProxyReactionTimerHandle;
 
+	UPROPERTY(Transient)
 	bool bHasDeferredPredictedProxyCorrection = false;
+
+	UPROPERTY(Transient)
 	FVector DeferredPredictedProxyCorrectionLocation = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
 	FQuat DeferredPredictedProxyCorrectionRotation = FQuat::Identity;
+
+	UPROPERTY(Transient)
+	bool bAcceptedPredictedProxyReactionCorrection = false;
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
 	float AbilityStopCorrectionSnapDistance = 8.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sync Ability Motion|Networking")
-	float PredictedProxyReactionMaxDeferredCorrectionDistance = 120.f;
+	float PredictedProxyReactionMaxDeferredCorrectionDistance = 30.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Directional Speed", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
 	float BackwardSpeedMultiplier = 0.6f;

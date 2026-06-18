@@ -378,6 +378,7 @@ void USyncAbilityMotionCharacterMovementComponent::BeginPredictedProxyReaction(f
 
 	bPredictedProxyReactionActive = true;
 	bHasDeferredPredictedProxyCorrection = false;
+	bAcceptedPredictedProxyReactionCorrection = false;
 
 	if (UWorld* World = GetWorld())
 	{
@@ -399,6 +400,7 @@ void USyncAbilityMotionCharacterMovementComponent::EndPredictedProxyReaction()
 	}
 
 	bPredictedProxyReactionActive = false;
+	bAcceptedPredictedProxyReactionCorrection = false;
 
 	if (UWorld* World = GetWorld())
 	{
@@ -634,15 +636,23 @@ void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(
 		bIsSimulatedProxy &&
 		IsPredictedProxyReactionActive();
 
+	if (!bPredictedProxyReaction)
+	{
+		bAcceptedPredictedProxyReactionCorrection = false;
+	}
+
 	if (bPredictedProxyReaction)
 	{
-		DeferredPredictedProxyCorrectionLocation = NewLocation;
-		DeferredPredictedProxyCorrectionRotation = NewRotation;
-		bHasDeferredPredictedProxyCorrection = true;
+		const bool bShouldDeferProxyReactionCorrection =
+			!bAcceptedPredictedProxyReactionCorrection &&
+			CorrectionDist2D <= PredictedProxyReactionMaxDeferredCorrectionDistance;
 
-		// Safety valve: if the prediction is massively wrong, accept the server now.
-		if (CorrectionDist2D <= PredictedProxyReactionMaxDeferredCorrectionDistance)
+		if (bShouldDeferProxyReactionCorrection)
 		{
+			DeferredPredictedProxyCorrectionLocation = NewLocation;
+			DeferredPredictedProxyCorrectionRotation = NewRotation;
+			bHasDeferredPredictedProxyCorrection = true;
+
 			// By the time SmoothCorrection is called, the component may already be at NewLocation.
 			// Put it back to the predicted location so the server correction is truly deferred.
 			if (UpdatedComponent)
@@ -675,16 +685,38 @@ void USyncAbilityMotionCharacterMovementComponent::SmoothCorrection(
 				UE_LOG(
 					LogSyncAbilityMotionMoveDiag,
 					Warning,
-					TEXT("SmoothCorrection deferred for predicted proxy reaction Dist=%.2f OldLoc=%s NewLoc=%s CurrentLocAfterRestore=%s %s"),
+					TEXT("SmoothCorrection deferred for predicted proxy reaction Dist=%.2f OldLoc=%s NewLoc=%s CurrentLocAfterRestore=%s AcceptedLargeCorrection=%s %s"),
 					CorrectionDist2D,
 					*OldLocation.ToCompactString(),
 					*NewLocation.ToCompactString(),
 					*CurrentLoc.ToCompactString(),
+					bAcceptedPredictedProxyReactionCorrection ? TEXT("true") : TEXT("false"),
 					*DescribeMovementState(this));
 			}
 
 			return;
 		}
+
+		// Once a correction is too large to defer, keep accepting corrections for the
+		// rest of this reaction. Otherwise we get accept -> restore -> accept -> restore.
+		bAcceptedPredictedProxyReactionCorrection = true;
+		bHasDeferredPredictedProxyCorrection = false;
+
+		if (IsSyncAbilityMotionMovementDiagnosticsEnabled())
+		{
+			UE_LOG(
+				LogSyncAbilityMotionMoveDiag,
+				Warning,
+				TEXT("SmoothCorrection accepted for predicted proxy reaction Dist=%.2f OldLoc=%s NewLoc=%s AcceptedLargeCorrection=%s %s"),
+				CorrectionDist2D,
+				*OldLocation.ToCompactString(),
+				*NewLocation.ToCompactString(),
+				bAcceptedPredictedProxyReactionCorrection ? TEXT("true") : TEXT("false"),
+				*DescribeMovementState(this));
+		}
+
+		Super::SmoothCorrection(OldLocation, OldRotation, NewLocation, NewRotation);
+		return;
 	}
 
 	const bool bInAbilityStopWindow =
