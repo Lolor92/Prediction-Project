@@ -7,13 +7,7 @@
 #include "InputAction.h"
 #include "AbilitySystemComponent.h"
 #include "FunctionLibrary/SyncInputFunctionLibrary.h"
-#include "Tag/SyncInputTags.h"
 #include "InputActionValue.h"
-#include "Abilities/GameplayAbility.h"
-#include "Camera/CameraComponent.h"
-#include "Engine/World.h"
-#include "GameFramework/SpringArmComponent.h"
-#include "Modules/ModuleManager.h"
 
 namespace SyncInputTags
 {
@@ -27,18 +21,11 @@ namespace SyncInputTags
 		static FGameplayTag T = FGameplayTag::RequestGameplayTag(TEXT("SyncInput.Look"));
 		return T;
 	}
-	static const FGameplayTag& Zoom()
-	{
-		static FGameplayTag T = FGameplayTag::RequestGameplayTag(TEXT("SyncInput.Zoom"));
-		return T;
-	}
 }
 
 USyncInputComponent::USyncInputComponent()
 {
-	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.bStartWithTickEnabled = false;
-	bComboSupportAvailable = FModuleManager::Get().ModuleExists(TEXT("SyncAbilityMotion"));
+	PrimaryComponentTick.bCanEverTick = false;
 }
 
 void USyncInputComponent::BeginPlay()
@@ -80,13 +67,6 @@ void USyncInputComponent::HandleNewPawn(APawn* NewPawn)
 void USyncInputComponent::InstallForPawn(APawn* Pawn)
 {
 	CachedPlayerController = GetOwningPlayerController();
-	CachedSpringArm = Pawn ? Pawn->FindComponentByClass<USpringArmComponent>() : nullptr;
-	CachedCamera = Pawn ? Pawn->FindComponentByClass<UCameraComponent>() : nullptr;
-	if (MaxZoomLevel >= MinZoomLevel)
-	{
-		ZoomLevel = FMath::Clamp(ZoomLevel, MinZoomLevel, MaxZoomLevel);
-	}
-	DesiredZoomArmLength = ZoomLevel * ZoomStepDistance;
 
 	AddMappingContextsForLocalPlayer();
 
@@ -106,16 +86,7 @@ void USyncInputComponent::InstallForPawn(APawn* Pawn)
 
 void USyncInputComponent::UninstallFromPawn()
 {
-	StopInputSimulation();
-	HeldInputTags.Reset();
-	ClearHeldInputRetry();
-	ClearAllComboChains();
 	RemoveMappingContextsForLocalPlayer();
-	CachedSpringArm = nullptr;
-	CachedCamera = nullptr;
-	DesiredZoomArmLength = 0.f;
-	bZoomInterpolationActive = false;
-	SetComponentTickEnabled(false);
 
 	if (APlayerController* PC = CachedPlayerController.Get())
 	{
@@ -173,60 +144,6 @@ void USyncInputComponent::RemoveMappingContextsForLocalPlayer() const
 	}
 }
 
-void USyncInputComponent::TickComponent(
-	float DeltaTime,
-	ELevelTick TickType,
-	FActorComponentTickFunction* ThisTickFunction)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	bool bKeepTicking = false;
-
-	if (bInputSimulationRunning && !ActiveSimulatedMoveInput.IsNearlyZero())
-	{
-		Move(FInputActionValue(ActiveSimulatedMoveInput));
-		bKeepTicking = true;
-	}
-
-	if (!bZoomInterpolationActive)
-	{
-		SetComponentTickEnabled(bKeepTicking);
-		return;
-	}
-
-	USpringArmComponent* SpringArm = FindSpringArm();
-	if (!SpringArm)
-	{
-		bZoomInterpolationActive = false;
-		SetComponentTickEnabled(bKeepTicking);
-		return;
-	}
-
-	if (ZoomInterpSpeed <= 0.f)
-	{
-		SpringArm->TargetArmLength = DesiredZoomArmLength;
-		bZoomInterpolationActive = false;
-		SetComponentTickEnabled(bKeepTicking);
-		return;
-	}
-
-	SpringArm->TargetArmLength = FMath::FInterpTo(
-		SpringArm->TargetArmLength,
-		DesiredZoomArmLength,
-		DeltaTime,
-		ZoomInterpSpeed);
-
-	if (FMath::IsNearlyEqual(SpringArm->TargetArmLength, DesiredZoomArmLength, 1.f))
-	{
-		SpringArm->TargetArmLength = DesiredZoomArmLength;
-		bZoomInterpolationActive = false;
-		SetComponentTickEnabled(bKeepTicking);
-		return;
-	}
-
-	SetComponentTickEnabled(true);
-}
-
 void USyncInputComponent::BindActionsFromConfig()
 {
 	if (!InjectedEnhancedInputComponent) return;
@@ -254,12 +171,6 @@ void USyncInputComponent::BindActionsFromConfig()
 				Row.InputAction, ETriggerEvent::Triggered, this, &USyncInputComponent::Look);
 			continue;
 		}
-		if (Row.InputTag.MatchesTagExact(SyncInputTags::Zoom()))
-		{
-			InjectedEnhancedInputComponent->BindAction(
-				Row.InputAction, ETriggerEvent::Triggered, this, &USyncInputComponent::Zoom);
-			continue;
-		}
 
 		// Everything else forwards to GAS via the tag
 		InjectedEnhancedInputComponent->BindAction(
@@ -267,15 +178,7 @@ void USyncInputComponent::BindActionsFromConfig()
 			this, &USyncInputComponent::HandleActionPressed, Row.InputTag);
 
 		InjectedEnhancedInputComponent->BindAction(
-			Row.InputAction, ETriggerEvent::Triggered,
-			this, &USyncInputComponent::HandleActionTriggered, Row.InputTag);
-
-		InjectedEnhancedInputComponent->BindAction(
 			Row.InputAction, ETriggerEvent::Completed,
-			this, &USyncInputComponent::HandleActionReleased, Row.InputTag);
-
-		InjectedEnhancedInputComponent->BindAction(
-			Row.InputAction, ETriggerEvent::Canceled,
 			this, &USyncInputComponent::HandleActionReleased, Row.InputTag);
 	}
 }
@@ -296,28 +199,45 @@ APlayerController* USyncInputComponent::GetOwningPlayerController() const
 void USyncInputComponent::HandleActionPressed(FGameplayTag InputTag)
 {
 	OnSyncInputPressed.Broadcast(InputTag);
-	AddHeldInputTag(InputTag);
-
-	const bool bActivated = TryActivateInputTag(InputTag, true);
-
-	if (bActivated && ShouldConsumeHeldInputAfterActivation(InputTag))
+	
+	if (!AbilitySystemComponent)
 	{
-		RemoveHeldInputTag(InputTag);
+		AbilitySystemComponent = USyncInputFunctionLibrary::GetAbilitySystemComponent(GetOwner());
 	}
+	if (!AbilitySystemComponent) return;
 
-	ScheduleHeldInputRetry();
+	// 1) Activate any ability whose AbilityTags contain InputTag (server-authoritative)
+	FGameplayTagContainer ActivationTags; ActivationTags.AddTag(InputTag);
+	AbilitySystemComponent->TryActivateAbilitiesByTag(ActivationTags);
+
+	// 2) Also forward "pressed" to already-active matching specs (dynamic OR ability tags)
+	for (FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+	{
+		const bool bMatches = Spec.GetDynamicSpecSourceTags().HasTag(InputTag) ||
+			(Spec.Ability && Spec.Ability->GetAssetTags().HasTag(InputTag));
+		if (!bMatches) continue;
+
+		AbilitySystemComponent->AbilitySpecInputPressed(Spec);
+
+		FPredictionKey PredictionKey;
+		if (UGameplayAbility* PrimaryInstance = Spec.GetPrimaryInstance())
+		{
+			PredictionKey = PrimaryInstance->GetCurrentActivationInfo().GetActivationPredictionKey();
+		}
+		AbilitySystemComponent->InvokeReplicatedEvent(
+			EAbilityGenericReplicatedEvent::InputPressed, Spec.Handle, PredictionKey);
+
+		if (!Spec.IsActive())
+		{
+			AbilitySystemComponent->TryActivateAbility(Spec.Handle);
+		}
+	}
 }
 
 void USyncInputComponent::HandleActionReleased(FGameplayTag InputTag)
 {
 	OnSyncInputReleased.Broadcast(InputTag);
-
-	RemoveHeldInputTag(InputTag);
-	if (HeldInputTags.IsEmpty())
-	{
-		ClearHeldInputRetry();
-	}
-
+	
 	if (!AbilitySystemComponent)
 	{
 		AbilitySystemComponent = USyncInputFunctionLibrary::GetAbilitySystemComponent(GetOwner());
@@ -326,635 +246,22 @@ void USyncInputComponent::HandleActionReleased(FGameplayTag InputTag)
 
 	for (FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
 	{
-		if (DoesSpecMatchInputTag(Spec, InputTag) && Spec.IsActive())
+		if (Spec.GetDynamicSpecSourceTags().HasTag(InputTag))
 		{
-			ForwardInputReleasedToSpec(Spec);
-		}
-	}
-}
-
-void USyncInputComponent::HandleActionTriggered(FGameplayTag InputTag)
-{
-	if (!InputTag.IsValid())
-	{
-		return;
-	}
-
-	if (!IsPersistentHeldInputTag(InputTag))
-	{
-		return;
-	}
-
-	if (!HeldInputTags.Contains(InputTag))
-	{
-		AddHeldInputTag(InputTag);
-	}
-
-	ScheduleHeldInputRetry();
-}
-
-bool USyncInputComponent::TryActivateInputTag(FGameplayTag InputTag, bool bForwardPressedToAlreadyActiveSpecs)
-{
-	if (!InputTag.IsValid()) return false;
-
-	if (!AbilitySystemComponent)
-	{
-		AbilitySystemComponent = USyncInputFunctionLibrary::GetAbilitySystemComponent(GetOwner());
-	}
-	if (!AbilitySystemComponent) return false;
-
-	bool bActivated = false;
-	for (FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
-	{
-		if (!DoesSpecMatchInputTag(Spec, InputTag)) continue;
-
-		bool bComboConsumedInput = false;
-		if (TryActivateComboAbility(Spec, bComboConsumedInput))
-		{
-			bActivated = true;
-			break;
-		}
-
-		if (bComboConsumedInput)
-		{
-			continue;
-		}
-
-		if (Spec.IsActive())
-		{
-			if (bForwardPressedToAlreadyActiveSpecs)
+			if (Spec.IsActive())
 			{
-				ForwardInputPressedToSpec(Spec);
-			}
+				AbilitySystemComponent->AbilitySpecInputReleased(Spec);
 
-			continue;
-		}
-
-		if (!CanLocallyActivateSpec(Spec)) continue;
-
-		if (AbilitySystemComponent->TryActivateAbility(Spec.Handle))
-		{
-			ForwardInputPressedToSpec(Spec);
-			UpdateComboChain(Spec.Handle, Spec);
-			bActivated = true;
-			break;
-		}
-	}
-
-	return bActivated;
-}
-
-bool USyncInputComponent::DoesSpecMatchInputTag(const FGameplayAbilitySpec& Spec, const FGameplayTag& InputTag) const
-{
-	return InputTag.IsValid() &&
-		(Spec.GetDynamicSpecSourceTags().HasTag(InputTag) ||
-			(Spec.Ability && Spec.Ability->GetAssetTags().HasTag(InputTag)));
-}
-
-bool USyncInputComponent::DoesSpecUseGameplayTag(const FGameplayAbilitySpec& Spec, const FGameplayTag& GameplayTag) const
-{
-	if (!GameplayTag.IsValid() || !Spec.Ability)
-	{
-		return false;
-	}
-
-	if (Spec.GetDynamicSpecSourceTags().HasTag(GameplayTag) ||
-		Spec.Ability->GetAssetTags().HasTag(GameplayTag))
-	{
-		return true;
-	}
-
-	if (UFunction* Function = Spec.Ability->FindFunction(TEXT("DoesAbilityUseGameplayTag")))
-	{
-		struct FDoesAbilityUseGameplayTagParams
-		{
-			FGameplayTag GameplayTag;
-			bool ReturnValue = false;
-		};
-
-		FDoesAbilityUseGameplayTagParams Params;
-		Params.GameplayTag = GameplayTag;
-		Spec.Ability->ProcessEvent(Function, &Params);
-		return Params.ReturnValue;
-	}
-
-	return false;
-}
-
-bool USyncInputComponent::CanLocallyActivateSpec(const FGameplayAbilitySpec& Spec) const
-{
-	if (!AbilitySystemComponent || !Spec.Ability) return false;
-
-	const FGameplayAbilityActorInfo* ActorInfo = AbilitySystemComponent->AbilityActorInfo.Get();
-	if (!ActorInfo) return false;
-
-	return Spec.Ability->CanActivateAbility(Spec.Handle, ActorInfo);
-}
-
-void USyncInputComponent::ForwardInputPressedToSpec(FGameplayAbilitySpec& Spec) const
-{
-	if (!AbilitySystemComponent) return;
-
-	AbilitySystemComponent->AbilitySpecInputPressed(Spec);
-
-	FPredictionKey PredictionKey;
-	if (UGameplayAbility* PrimaryInstance = Spec.GetPrimaryInstance())
-	{
-		PredictionKey = PrimaryInstance->GetCurrentActivationInfo().GetActivationPredictionKey();
-	}
-
-	AbilitySystemComponent->InvokeReplicatedEvent(
-		EAbilityGenericReplicatedEvent::InputPressed,
-		Spec.Handle,
-		PredictionKey);
-}
-
-void USyncInputComponent::ForwardInputReleasedToSpec(FGameplayAbilitySpec& Spec) const
-{
-	if (!AbilitySystemComponent) return;
-
-	AbilitySystemComponent->AbilitySpecInputReleased(Spec);
-
-	FPredictionKey PredictionKey;
-	if (UGameplayAbility* PrimaryInstance = Spec.GetPrimaryInstance())
-	{
-		PredictionKey = PrimaryInstance->GetCurrentActivationInfo().GetActivationPredictionKey();
-	}
-
-	AbilitySystemComponent->InvokeReplicatedEvent(
-		EAbilityGenericReplicatedEvent::InputReleased,
-		Spec.Handle,
-		PredictionKey);
-}
-
-bool USyncInputComponent::TryActivateComboAbility(
-	const FGameplayAbilitySpec& RequestedAbilitySpec,
-	bool& bOutConsumedInput)
-{
-	bOutConsumedInput = false;
-
-	if (!bComboSupportAvailable || !bEnableComboInputRouting || !AbilitySystemComponent)
-	{
-		return false;
-	}
-
-	FSyncInputActiveComboChain* ComboChain = ActiveComboChains.Find(RequestedAbilitySpec.Handle);
-	if (!ComboChain || !ComboChain->NextAbilityClass)
-	{
-		return false;
-	}
-
-	bOutConsumedInput = true;
-
-	for (FGameplayAbilitySpec& ComboSpec : AbilitySystemComponent->GetActivatableAbilities())
-	{
-		if (!ComboSpec.Ability || !ComboSpec.Ability->GetClass()->IsChildOf(ComboChain->NextAbilityClass)) continue;
-		if (!CanLocallyActivateSpec(ComboSpec)) return false;
-
-		if (AbilitySystemComponent->TryActivateAbility(ComboSpec.Handle))
-		{
-			ForwardInputPressedToSpec(ComboSpec);
-			UpdateComboChain(RequestedAbilitySpec.Handle, ComboSpec);
-			return true;
-		}
-
-		return false;
-	}
-
-	ClearComboChain(RequestedAbilitySpec.Handle);
-	return false;
-}
-
-void USyncInputComponent::UpdateComboChain(
-	const FGameplayAbilitySpecHandle StarterHandle,
-	const FGameplayAbilitySpec& CurrentAbilitySpec)
-{
-	if (!bComboSupportAvailable || !bEnableComboInputRouting)
-	{
-		ClearComboChain(StarterHandle);
-		return;
-	}
-
-	const TSubclassOf<UGameplayAbility> NextAbilityClass = GetComboAbilityClassFromSpec(CurrentAbilitySpec);
-	const float ComboWindowDuration = GetComboWindowDurationFromSpec(CurrentAbilitySpec);
-	if (!NextAbilityClass || ComboWindowDuration <= 0.f)
-	{
-		ClearComboChain(StarterHandle);
-		return;
-	}
-
-	FSyncInputActiveComboChain& ComboChain = ActiveComboChains.FindOrAdd(StarterHandle);
-	ComboChain.CurrentAbilityHandle = CurrentAbilitySpec.Handle;
-	ComboChain.NextAbilityClass = NextAbilityClass;
-
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(ComboChain.TimerHandle);
-
-		FTimerDelegate TimerDelegate =
-			FTimerDelegate::CreateUObject(this, &ThisClass::ClearComboChain, StarterHandle);
-
-		World->GetTimerManager().SetTimer(
-			ComboChain.TimerHandle,
-			TimerDelegate,
-			ComboWindowDuration,
-			false);
-	}
-}
-
-void USyncInputComponent::ClearComboChain(FGameplayAbilitySpecHandle StarterHandle)
-{
-	if (FSyncInputActiveComboChain* ComboChain = ActiveComboChains.Find(StarterHandle))
-	{
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(ComboChain->TimerHandle);
-		}
-	}
-
-	ActiveComboChains.Remove(StarterHandle);
-}
-
-void USyncInputComponent::ClearAllComboChains()
-{
-	UWorld* World = GetWorld();
-	for (TPair<FGameplayAbilitySpecHandle, FSyncInputActiveComboChain>& ComboChainPair : ActiveComboChains)
-	{
-		if (World)
-		{
-			World->GetTimerManager().ClearTimer(ComboChainPair.Value.TimerHandle);
-		}
-	}
-
-	ActiveComboChains.Reset();
-}
-
-UGameplayAbility* USyncInputComponent::GetComboDataAbilityFromSpec(const FGameplayAbilitySpec& Spec) const
-{
-	if (UGameplayAbility* PrimaryInstance = Spec.GetPrimaryInstance())
-	{
-		return PrimaryInstance;
-	}
-
-	return Spec.Ability;
-}
-
-TSubclassOf<UGameplayAbility> USyncInputComponent::GetComboAbilityClassFromSpec(
-	const FGameplayAbilitySpec& Spec) const
-{
-	UGameplayAbility* Ability = GetComboDataAbilityFromSpec(Spec);
-	if (!Ability) return nullptr;
-
-	UFunction* Function = Ability->FindFunction(TEXT("GetComboAbilityClass"));
-	if (!Function) return nullptr;
-
-	struct FGetComboAbilityClassParams
-	{
-		TSubclassOf<UGameplayAbility> ReturnValue = nullptr;
-	};
-
-	FGetComboAbilityClassParams Params;
-	Ability->ProcessEvent(Function, &Params);
-	return Params.ReturnValue;
-}
-
-float USyncInputComponent::GetComboWindowDurationFromSpec(const FGameplayAbilitySpec& Spec) const
-{
-	UGameplayAbility* Ability = GetComboDataAbilityFromSpec(Spec);
-	if (!Ability) return 0.f;
-
-	UFunction* Function = Ability->FindFunction(TEXT("GetComboWindowDuration"));
-	if (!Function) return 0.f;
-
-	struct FGetComboWindowDurationParams
-	{
-		float ReturnValue = 0.f;
-	};
-
-	FGetComboWindowDurationParams Params;
-	Ability->ProcessEvent(Function, &Params);
-	return Params.ReturnValue;
-}
-
-void USyncInputComponent::AddHeldInputTag(FGameplayTag InputTag)
-{
-	if (!InputTag.IsValid()) return;
-
-	HeldInputTags.Remove(InputTag);
-	HeldInputTags.Add(InputTag);
-}
-
-void USyncInputComponent::RemoveHeldInputTag(FGameplayTag InputTag)
-{
-	HeldInputTags.Remove(InputTag);
-}
-
-bool USyncInputComponent::ShouldConsumeHeldInputAfterActivation(FGameplayTag InputTag) const
-{
-	if (!bConsumeHeldInputAfterActivation)
-	{
-		return false;
-	}
-
-	return !IsPersistentHeldInputTag(InputTag);
-}
-
-bool USyncInputComponent::IsPersistentHeldInputTag(FGameplayTag InputTag) const
-{
-	if (!InputTag.IsValid() || PersistentHeldInputTags.IsEmpty())
-	{
-		return false;
-	}
-
-	return PersistentHeldInputTags.HasTag(InputTag);
-}
-
-bool USyncInputComponent::IsHeldInputRetryBlocked()
-{
-	if (HeldInputRetryBlockedByTags.IsEmpty())
-	{
-		return false;
-	}
-
-	if (!AbilitySystemComponent)
-	{
-		AbilitySystemComponent = USyncInputFunctionLibrary::GetAbilitySystemComponent(GetOwner());
-	}
-
-	if (!AbilitySystemComponent)
-	{
-		return false;
-	}
-
-	return AbilitySystemComponent->HasAnyMatchingGameplayTags(HeldInputRetryBlockedByTags);
-}
-
-void USyncInputComponent::SuppressHeldInputForAbilityTag(FGameplayTag AbilityOrOwnedTag)
-{
-	if (!AbilityOrOwnedTag.IsValid())
-	{
-		return;
-	}
-
-	HeldInputTags.Remove(AbilityOrOwnedTag);
-
-	if (!AbilitySystemComponent)
-	{
-		AbilitySystemComponent = USyncInputFunctionLibrary::GetAbilitySystemComponent(GetOwner());
-	}
-
-	if (AbilitySystemComponent)
-	{
-		for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
-		{
-			if (!DoesSpecUseGameplayTag(Spec, AbilityOrOwnedTag))
-			{
-				continue;
-			}
-
-			for (int32 Index = HeldInputTags.Num() - 1; Index >= 0; --Index)
-			{
-				if (DoesSpecMatchInputTag(Spec, HeldInputTags[Index]))
+				FPredictionKey PredictionKey;
+				if (UGameplayAbility* PrimaryInstance = Spec.GetPrimaryInstance())
 				{
-					HeldInputTags.RemoveAtSwap(Index);
+					PredictionKey = PrimaryInstance->GetCurrentActivationInfo().GetActivationPredictionKey();
 				}
+
+				AbilitySystemComponent->InvokeReplicatedEvent(EAbilityGenericReplicatedEvent::InputReleased,Spec.Handle,PredictionKey);
 			}
 		}
 	}
-
-	if (HeldInputTags.IsEmpty())
-	{
-		ClearHeldInputRetry();
-	}
-}
-
-void USyncInputComponent::RetryHeldInputActivation()
-{
-	if (!bRetryHeldInputActivation || HeldInputTags.IsEmpty())
-	{
-		ClearHeldInputRetry();
-		return;
-	}
-
-	if (IsHeldInputRetryBlocked())
-	{
-		return;
-	}
-
-	for (int32 Index = HeldInputTags.Num() - 1; Index >= 0; --Index)
-	{
-		const FGameplayTag HeldInputTag = HeldInputTags[Index];
-
-		if (!HeldInputTag.IsValid())
-		{
-			HeldInputTags.RemoveAtSwap(Index);
-			continue;
-		}
-
-		if (TryActivateInputTag(HeldInputTags[Index], false))
-		{
-			if (ShouldConsumeHeldInputAfterActivation(HeldInputTags[Index]))
-			{
-				HeldInputTags.RemoveAtSwap(Index);
-			}
-
-			break;
-		}
-	}
-
-	if (HeldInputTags.IsEmpty())
-	{
-		ClearHeldInputRetry();
-	}
-}
-
-void USyncInputComponent::ScheduleHeldInputRetry()
-{
-	if (!bRetryHeldInputActivation || HeldInputTags.IsEmpty() || HeldInputRetryTimerHandle.IsValid()) return;
-
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().SetTimer(
-			HeldInputRetryTimerHandle,
-			this,
-			&ThisClass::RetryHeldInputActivation,
-			HeldInputRetryInterval,
-			true);
-	}
-}
-
-void USyncInputComponent::ClearHeldInputRetry()
-{
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(HeldInputRetryTimerHandle);
-	}
-
-	HeldInputRetryTimerHandle.Invalidate();
-}
-
-void USyncInputComponent::StartInputSimulation(const TArray<FGameplayTag>& InputTags)
-{
-	if (!IsLocallyControlledOwner()) return;
-
-	StopInputSimulation();
-
-	SimulatedInputTags = InputTags;
-	if (SimulatedInputTags.IsEmpty())
-	{
-		SimulatedInputTags = SimulatedInputTagPool;
-	}
-	if (SimulatedInputTags.IsEmpty())
-	{
-		SimulatedInputTags = GetDefaultSimulatedInputTags();
-	}
-
-	SimulatedInputTags.RemoveAll([](const FGameplayTag& Tag)
-	{
-		return !Tag.IsValid() ||
-			Tag.MatchesTagExact(SyncInputTags::Move()) ||
-			Tag.MatchesTagExact(SyncInputTags::Look()) ||
-			Tag.MatchesTagExact(SyncInputTags::Zoom());
-	});
-
-	if (SimulatedInputTags.IsEmpty() && (!bSimulateMovementInput || SimulatedMovementChance <= 0.f))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("SyncInput: Input simulation has no tags and movement simulation is disabled."));
-		return;
-	}
-
-	bInputSimulationRunning = true;
-	ScheduleNextSimulatedInput();
-}
-
-void USyncInputComponent::StopInputSimulation()
-{
-	if (ActiveSimulatedInputTag.IsValid())
-	{
-		HandleActionReleased(ActiveSimulatedInputTag);
-		ActiveSimulatedInputTag = FGameplayTag();
-	}
-
-	SetSimulatedMovementHeld(false);
-	ClearSimulatedInputTimers();
-	SimulatedInputTags.Reset();
-	bInputSimulationRunning = false;
-}
-
-void USyncInputComponent::ScheduleNextSimulatedInput()
-{
-	if (!bInputSimulationRunning) return;
-
-	const float MinPause = FMath::Max(0.f, SimulatedInputMinPauseDuration);
-	const float MaxPause = FMath::Max(MinPause, SimulatedInputMaxPauseDuration);
-	const float PauseDuration = FMath::FRandRange(MinPause, MaxPause);
-
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().SetTimer(
-			SimulatedInputPressTimerHandle,
-			this,
-			&ThisClass::PressRandomSimulatedInput,
-			PauseDuration,
-			false);
-	}
-}
-
-void USyncInputComponent::PressRandomSimulatedInput()
-{
-	if (!bInputSimulationRunning) return;
-
-	const bool bUseMovement =
-		bSimulateMovementInput &&
-		FMath::FRand() <= FMath::Clamp(SimulatedMovementChance, 0.f, 1.f);
-
-	if (bUseMovement || SimulatedInputTags.IsEmpty())
-	{
-		SetSimulatedMovementHeld(true);
-	}
-	else
-	{
-		ActiveSimulatedInputTag = SimulatedInputTags[FMath::RandRange(0, SimulatedInputTags.Num() - 1)];
-		HandleActionPressed(ActiveSimulatedInputTag);
-	}
-
-	const float MinHold = FMath::Max(0.01f, SimulatedInputMinHoldDuration);
-	const float MaxHold = FMath::Max(MinHold, SimulatedInputMaxHoldDuration);
-	const float HoldDuration = FMath::FRandRange(MinHold, MaxHold);
-
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().SetTimer(
-			SimulatedInputReleaseTimerHandle,
-			this,
-			&ThisClass::ReleaseSimulatedInput,
-			HoldDuration,
-			false);
-	}
-}
-
-void USyncInputComponent::ReleaseSimulatedInput()
-{
-	if (ActiveSimulatedInputTag.IsValid())
-	{
-		HandleActionReleased(ActiveSimulatedInputTag);
-		ActiveSimulatedInputTag = FGameplayTag();
-	}
-
-	SetSimulatedMovementHeld(false);
-	ScheduleNextSimulatedInput();
-}
-
-void USyncInputComponent::SetSimulatedMovementHeld(bool bHeld)
-{
-	if (!bHeld)
-	{
-		ActiveSimulatedMoveInput = FVector2D::ZeroVector;
-		return;
-	}
-
-	static const FVector2D Directions[] =
-	{
-		FVector2D(0.f, 1.f),
-		FVector2D(0.f, -1.f),
-		FVector2D(1.f, 0.f),
-		FVector2D(-1.f, 0.f),
-		FVector2D(1.f, 1.f).GetSafeNormal(),
-		FVector2D(-1.f, 1.f).GetSafeNormal(),
-		FVector2D(1.f, -1.f).GetSafeNormal(),
-		FVector2D(-1.f, -1.f).GetSafeNormal()
-	};
-
-	ActiveSimulatedMoveInput = Directions[FMath::RandRange(0, UE_ARRAY_COUNT(Directions) - 1)];
-	SetComponentTickEnabled(true);
-}
-
-void USyncInputComponent::ClearSimulatedInputTimers()
-{
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(SimulatedInputPressTimerHandle);
-		World->GetTimerManager().ClearTimer(SimulatedInputReleaseTimerHandle);
-	}
-
-	SimulatedInputPressTimerHandle.Invalidate();
-	SimulatedInputReleaseTimerHandle.Invalidate();
-}
-
-TArray<FGameplayTag> USyncInputComponent::GetDefaultSimulatedInputTags() const
-{
-	TArray<FGameplayTag> Result;
-	if (!InputConfig) return Result;
-
-	for (const FSyncInputAction& Row : InputConfig->SyncInputActions)
-	{
-		if (Row.InputTag.IsValid())
-		{
-			Result.AddUnique(Row.InputTag);
-		}
-	}
-
-	return Result;
 }
 
 void USyncInputComponent::Move(const FInputActionValue& Value)
@@ -989,75 +296,4 @@ void USyncInputComponent::Look(const FInputActionValue& Value)
 		PlayerController->AddYawInput(LookVector.X);
 		PlayerController->AddPitchInput(LookVector.Y);
 	}
-}
-
-void USyncInputComponent::Zoom(const FInputActionValue& Value)
-{
-	if (!bEnableZoom || MaxZoomLevel < MinZoomLevel) return;
-
-	const float InputAxisValue = Value.Get<float>();
-	if (FMath::IsNearlyZero(InputAxisValue)) return;
-
-	if (InputAxisValue > 0.f && ZoomLevel > MinZoomLevel)
-	{
-		--ZoomLevel;
-		ApplyZoom();
-	}
-	else if (InputAxisValue < 0.f && ZoomLevel < MaxZoomLevel)
-	{
-		++ZoomLevel;
-		ApplyZoom();
-	}
-}
-
-void USyncInputComponent::ApplyZoom()
-{
-	if (MaxZoomLevel < MinZoomLevel) return;
-
-	USpringArmComponent* SpringArm = FindSpringArm();
-	if (!SpringArm) return;
-
-	ZoomLevel = FMath::Clamp(ZoomLevel, MinZoomLevel, MaxZoomLevel);
-	DesiredZoomArmLength = ZoomLevel * ZoomStepDistance;
-	bZoomInterpolationActive = true;
-	SetComponentTickEnabled(true);
-
-	if (UCameraComponent* Camera = FindCamera())
-	{
-		const FVector& CameraOffset = ZoomLevel == MinZoomLevel
-			? ClosestZoomCameraOffset
-			: DefaultCameraOffset;
-
-		Camera->SetRelativeLocation(CameraOffset);
-	}
-}
-
-USpringArmComponent* USyncInputComponent::FindSpringArm() const
-{
-	if (CachedSpringArm)
-	{
-		return CachedSpringArm;
-	}
-
-	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
-	{
-		return Pawn->FindComponentByClass<USpringArmComponent>();
-	}
-
-	return nullptr;
-}
-
-UCameraComponent* USyncInputComponent::FindCamera() const
-{
-	if (CachedCamera)
-	{
-		return CachedCamera;
-	}
-
-	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
-	{
-		return Pawn->FindComponentByClass<UCameraComponent>();
-	}
-
-	return nullptr;
 }

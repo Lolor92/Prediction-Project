@@ -1,18 +1,20 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "AnimInstance/SyncAbilityMotionAnimInstance.h"
+#include "Animation/AnimInstance.h"
 #include "PL_AnimInstance.generated.h"
+
+class ACharacter;
+class UAbilitySystemComponent;
+class UCharacterMovementComponent;
 
 
 UCLASS()
-class PROJECTLOGOS_API UPL_AnimInstance : public USyncAbilityMotionAnimInstance
+class PROJECTLOGOS_API UPL_AnimInstance : public UAnimInstance
 {
 	GENERATED_BODY()
 	
 public:
-	UPL_AnimInstance();
-	
 	// Anim instance lifecycle.
 	virtual void NativeInitializeAnimation() override;
 	virtual void NativeUpdateAnimation(float DeltaSeconds) override;
@@ -31,4 +33,32 @@ public:
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Anim|State");
 	bool bIsStunned = false;
+	
+protected:
+	UPROPERTY()
+	TObjectPtr<ACharacter> Character = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<UCharacterMovementComponent> CharacterMovementComponent = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<UAbilitySystemComponent> AbilitySystemComponent = nullptr;
+	
+	UPROPERTY(BlueprintReadOnly, Category="Anim|Movement", meta=(AllowPrivateAccess="true"))
+	float GroundSpeed = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category="Anim|Movement", meta=(AllowPrivateAccess="true"))
+	bool bIsAccelerating = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Anim|Movement", meta=(AllowPrivateAccess="true"))
+	bool IsAirBorne = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Anim|Movement", meta=(AllowPrivateAccess="true"))
+	FRotator AimRotation;
+
+	UPROPERTY(BlueprintReadOnly, Category="Anim|Movement", meta=(AllowPrivateAccess="true"))
+	FRotator MovementRotation;
+
+	UPROPERTY(BlueprintReadOnly, Category="Anim|Movement", meta=(AllowPrivateAccess="true"))
+	float MovementOffsetYaw = 0.f;
 };

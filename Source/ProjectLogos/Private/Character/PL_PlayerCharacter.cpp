@@ -46,6 +46,4 @@ void APL_PlayerCharacter::InitializeAbilitySystem()
 	if (!AbilitySystemComponent) return;
 
 	AbilitySystemComponent->InitAbilityActorInfo(TB_PlayerState, this);
-
-	BindBodyCollisionPassthroughTag();
 }

@@ -34,14 +34,6 @@
 			"Enabled": true
 		},
 		{
-			"Name": "SyncAbilityMotion",
-			"Enabled": true
-		},
-		{
-			"Name": "SyncCombat",
-			"Enabled": true
-		},
-		{
 			"Name": "Iris",
 			"Enabled": true
 		}

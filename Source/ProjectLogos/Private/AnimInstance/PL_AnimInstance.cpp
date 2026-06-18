@@ -1,49 +1,45 @@
 ﻿#include "AnimInstance/PL_AnimInstance.h"
-#include "BlueprintLibrary/SCP_CombatPredictionBlueprintLibrary.h"
 #include "GameFramework/Character.h"
-
-UPL_AnimInstance::UPL_AnimInstance()
-{
-}
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Kismet/KismetMathLibrary.h"
 
 void UPL_AnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();
+	
+	APawn* PawnOwner = TryGetPawnOwner();
+	if (!PawnOwner) return;
+
+	Character = Cast<ACharacter>(PawnOwner);
+	if (!Character) return;
+
+	CharacterMovementComponent = Character->GetCharacterMovement();
 }
 
 void UPL_AnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
 	Super::NativeUpdateAnimation(DeltaSeconds);
 
-	const bool bAbilityReleasedToLowerBody =
-		bCanBlendMontage &&
-		bShouldBlendLowerBody &&
-		!bRootMotionEnabled;
+	if (!Character || !CharacterMovementComponent) return;
 
-	if (bAbilityReleasedToLowerBody)
+	/* ---------- Movement ---------- */
+	bIsAccelerating = CharacterMovementComponent->GetCurrentAcceleration().Size() > 0.f;
+	GroundSpeed     = UKismetMathLibrary::VSizeXY(CharacterMovementComponent->Velocity);
+	IsAirBorne      = CharacterMovementComponent->IsFalling();
+	
+	/* ---------- Rotation ---------- */
+	AimRotation = Character->GetBaseAimRotation();
+
+	const FVector Velocity = Character->GetVelocity();
+	if (!Velocity.IsNearlyZero())
 	{
-		return;
+		MovementRotation = UKismetMathLibrary::MakeRotFromX(Velocity);
+		MovementOffsetYaw = UKismetMathLibrary::NormalizedDeltaRotator(MovementRotation, AimRotation).Yaw;
+	}
+	else
+	{
+		MovementOffsetYaw = 0.f;
 	}
 	
-	float LockedGroundSpeed = GroundSpeed;
-	bool bLockedIsAccelerating = bIsAccelerating;
-	float LockedMovementOffsetYaw = MovementOffsetYaw;
-	bool bAppliedReactionLock = false;
-
-	USCP_CombatPredictionBlueprintLibrary::ApplyPredictedTargetReactionAnimLock(
-		Character.Get(),
-		GroundSpeed,
-		bIsAccelerating,
-		MovementOffsetYaw,
-		LockedGroundSpeed,
-		bLockedIsAccelerating,
-		LockedMovementOffsetYaw,
-		bAppliedReactionLock);
-
-	if (bAppliedReactionLock)
-	{
-		GroundSpeed = LockedGroundSpeed;
-		bIsAccelerating = bLockedIsAccelerating;
-		MovementOffsetYaw = LockedMovementOffsetYaw;
-	}
+	Character->bUseControllerRotationYaw = bIsAccelerating;
 }
