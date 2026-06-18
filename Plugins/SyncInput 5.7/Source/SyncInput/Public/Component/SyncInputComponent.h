@@ -4,6 +4,7 @@
 #include <Components/ActorComponent.h>
 #include "Data/SyncInputConfig.h"
 #include "GameplayAbilitySpecHandle.h"
+#include "GameplayTagContainer.h"
 #include "InputActionValue.h"
 #include "TimerManager.h"
 #include "SyncInputComponent.generated.h"
@@ -52,6 +53,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Held Input")
 	bool bConsumeHeldInputAfterActivation = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Held Input")
+	FGameplayTagContainer PersistentHeldInputTags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="SyncInput|Held Input")
+	FGameplayTagContainer HeldInputRetryBlockedByTags;
 
 	UPROPERTY(Transient)
 	bool bComboSupportAvailable = false;
@@ -148,6 +155,9 @@ private:
 	void AddHeldInputTag(FGameplayTag InputTag);
 	void RemoveHeldInputTag(FGameplayTag InputTag);
 	void RetryHeldInputActivation();
+	bool ShouldConsumeHeldInputAfterActivation(FGameplayTag InputTag) const;
+	bool IsPersistentHeldInputTag(FGameplayTag InputTag) const;
+	bool IsHeldInputRetryBlocked();
 	void ScheduleHeldInputRetry();
 	void ClearHeldInputRetry();
 	void ScheduleNextSimulatedInput();
@@ -164,6 +174,7 @@ private:
 	// bound handlers
 	void HandleActionPressed(FGameplayTag InputTag);
 	void HandleActionReleased(FGameplayTag InputTag);
+	void HandleActionTriggered(FGameplayTag InputTag);
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	void Zoom(const FInputActionValue& Value);

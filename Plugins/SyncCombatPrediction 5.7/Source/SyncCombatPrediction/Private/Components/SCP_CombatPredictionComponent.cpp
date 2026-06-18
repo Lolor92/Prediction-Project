@@ -974,7 +974,6 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_
 
 		if (BlockingTag.IsValid())
 		{
-			SyncCombatPrediction::SuppressHeldInputForAbilityTag(GetOwner(), BlockingTag);
 			CancelActiveAbilitiesWithTag(GetOwner(), BlockingTag);
 		}
 
@@ -1011,7 +1010,6 @@ void USCP_CombatPredictionComponent::ClientPlayOwnerTargetReactionWithTransform_
 void USCP_CombatPredictionComponent::ClientCancelActiveAbilitiesWithTag_Implementation(
 	FGameplayTag AbilityOrOwnedTag)
 {
-	SyncCombatPrediction::SuppressHeldInputForAbilityTag(GetOwner(), AbilityOrOwnedTag);
 	CancelActiveAbilitiesWithTag(GetOwner(), AbilityOrOwnedTag);
 }
 

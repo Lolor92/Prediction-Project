@@ -267,6 +267,10 @@ void USyncInputComponent::BindActionsFromConfig()
 			this, &USyncInputComponent::HandleActionPressed, Row.InputTag);
 
 		InjectedEnhancedInputComponent->BindAction(
+			Row.InputAction, ETriggerEvent::Triggered,
+			this, &USyncInputComponent::HandleActionTriggered, Row.InputTag);
+
+		InjectedEnhancedInputComponent->BindAction(
 			Row.InputAction, ETriggerEvent::Completed,
 			this, &USyncInputComponent::HandleActionReleased, Row.InputTag);
 
@@ -292,10 +296,11 @@ APlayerController* USyncInputComponent::GetOwningPlayerController() const
 void USyncInputComponent::HandleActionPressed(FGameplayTag InputTag)
 {
 	OnSyncInputPressed.Broadcast(InputTag);
-
 	AddHeldInputTag(InputTag);
+
 	const bool bActivated = TryActivateInputTag(InputTag, true);
-	if (bActivated && bConsumeHeldInputAfterActivation)
+
+	if (bActivated && ShouldConsumeHeldInputAfterActivation(InputTag))
 	{
 		RemoveHeldInputTag(InputTag);
 	}
@@ -326,6 +331,26 @@ void USyncInputComponent::HandleActionReleased(FGameplayTag InputTag)
 			ForwardInputReleasedToSpec(Spec);
 		}
 	}
+}
+
+void USyncInputComponent::HandleActionTriggered(FGameplayTag InputTag)
+{
+	if (!InputTag.IsValid())
+	{
+		return;
+	}
+
+	if (!IsPersistentHeldInputTag(InputTag))
+	{
+		return;
+	}
+
+	if (!HeldInputTags.Contains(InputTag))
+	{
+		AddHeldInputTag(InputTag);
+	}
+
+	ScheduleHeldInputRetry();
 }
 
 bool USyncInputComponent::TryActivateInputTag(FGameplayTag InputTag, bool bForwardPressedToAlreadyActiveSpecs)
@@ -624,6 +649,46 @@ void USyncInputComponent::RemoveHeldInputTag(FGameplayTag InputTag)
 	HeldInputTags.Remove(InputTag);
 }
 
+bool USyncInputComponent::ShouldConsumeHeldInputAfterActivation(FGameplayTag InputTag) const
+{
+	if (!bConsumeHeldInputAfterActivation)
+	{
+		return false;
+	}
+
+	return !IsPersistentHeldInputTag(InputTag);
+}
+
+bool USyncInputComponent::IsPersistentHeldInputTag(FGameplayTag InputTag) const
+{
+	if (!InputTag.IsValid() || PersistentHeldInputTags.IsEmpty())
+	{
+		return false;
+	}
+
+	return PersistentHeldInputTags.HasTag(InputTag);
+}
+
+bool USyncInputComponent::IsHeldInputRetryBlocked()
+{
+	if (HeldInputRetryBlockedByTags.IsEmpty())
+	{
+		return false;
+	}
+
+	if (!AbilitySystemComponent)
+	{
+		AbilitySystemComponent = USyncInputFunctionLibrary::GetAbilitySystemComponent(GetOwner());
+	}
+
+	if (!AbilitySystemComponent)
+	{
+		return false;
+	}
+
+	return AbilitySystemComponent->HasAnyMatchingGameplayTags(HeldInputRetryBlockedByTags);
+}
+
 void USyncInputComponent::SuppressHeldInputForAbilityTag(FGameplayTag AbilityOrOwnedTag)
 {
 	if (!AbilityOrOwnedTag.IsValid())
@@ -671,9 +736,16 @@ void USyncInputComponent::RetryHeldInputActivation()
 		return;
 	}
 
+	if (IsHeldInputRetryBlocked())
+	{
+		return;
+	}
+
 	for (int32 Index = HeldInputTags.Num() - 1; Index >= 0; --Index)
 	{
-		if (!HeldInputTags[Index].IsValid())
+		const FGameplayTag HeldInputTag = HeldInputTags[Index];
+
+		if (!HeldInputTag.IsValid())
 		{
 			HeldInputTags.RemoveAtSwap(Index);
 			continue;
@@ -681,7 +753,7 @@ void USyncInputComponent::RetryHeldInputActivation()
 
 		if (TryActivateInputTag(HeldInputTags[Index], false))
 		{
-			if (bConsumeHeldInputAfterActivation)
+			if (ShouldConsumeHeldInputAfterActivation(HeldInputTags[Index]))
 			{
 				HeldInputTags.RemoveAtSwap(Index);
 			}
