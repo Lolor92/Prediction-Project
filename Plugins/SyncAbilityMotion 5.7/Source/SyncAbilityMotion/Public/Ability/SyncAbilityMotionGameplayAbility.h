@@ -45,6 +45,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Ability|Activation")
 	bool bBypassReactionActivationSuppression = false;
 
+	UPROPERTY(EditDefaultsOnly, Category="Ability|Activation")
+	bool bClearReactionMovementLockOnActivate = false;
+
 	UPROPERTY(EditDefaultsOnly, Category="Ability|Gameplay Effects", meta=(DisplayName="Montage Percent Effect Windows"))
 	TArray<FSyncAbilityMotionGameplayEffectWindow> GameplayEffectWindows;
 

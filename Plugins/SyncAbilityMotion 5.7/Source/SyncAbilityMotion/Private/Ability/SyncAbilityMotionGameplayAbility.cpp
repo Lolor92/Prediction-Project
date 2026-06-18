@@ -14,6 +14,7 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "HAL/IConsoleManager.h"
 #include "Modules/ModuleManager.h"
+#include "Movement/SyncAbilityMotionCharacterMovementComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSyncAbilityMotionAbilityDiag, Log, All);
 
@@ -68,6 +69,25 @@ namespace
 
 		return false;
 	}
+
+	void ClearReactionMovementLockForAvatar(const FGameplayAbilityActorInfo* ActorInfo)
+	{
+		ACharacter* Character = ActorInfo ? Cast<ACharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
+		if (!Character)
+		{
+			return;
+		}
+
+		USyncAbilityMotionCharacterMovementComponent* MoveComp =
+			Cast<USyncAbilityMotionCharacterMovementComponent>(Character->GetCharacterMovement());
+
+		if (!MoveComp)
+		{
+			return;
+		}
+
+		MoveComp->EndReactionMovementInputLock();
+	}
 }
 
 USyncAbilityMotionGameplayAbility::USyncAbilityMotionGameplayAbility()
@@ -105,6 +125,12 @@ void USyncAbilityMotionGameplayAbility::ActivateAbility(const FGameplayAbilitySp
 	}
 
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+
+	if (bClearReactionMovementLockOnActivate)
+	{
+		ClearReactionMovementLockForAvatar(ActorInfo);
+	}
+
 	InterruptOtherActiveAbilities();
 	RotateAvatarToControllerYawOnActivate();
 	ResetGameplayEffectWindows();
