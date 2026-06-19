@@ -11,6 +11,46 @@
 #include "GameFramework/Pawn.h"
 #include "TimerManager.h"
 
+static FString SP_GetNetDebugPrefix(const UObject* WorldContextObject, const AActor* Actor)
+{
+	const UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+
+	const TCHAR* NetModeString = TEXT("NoWorld");
+	if (World)
+	{
+		switch (World->GetNetMode())
+		{
+		case NM_Standalone:
+			NetModeString = TEXT("Standalone");
+			break;
+		case NM_DedicatedServer:
+			NetModeString = TEXT("DedicatedServer");
+			break;
+		case NM_ListenServer:
+			NetModeString = TEXT("ListenServer");
+			break;
+		case NM_Client:
+			NetModeString = TEXT("Client");
+			break;
+		default:
+			NetModeString = TEXT("Unknown");
+			break;
+		}
+	}
+
+	const APawn* Pawn = Cast<APawn>(Actor);
+
+	return FString::Printf(
+		TEXT("[World=%s NetMode=%s Actor=%s Role=%d RemoteRole=%d Local=%d Auth=%d]"),
+		World ? *World->GetName() : TEXT("None"),
+		NetModeString,
+		*GetNameSafe(Actor),
+		Actor ? static_cast<int32>(Actor->GetLocalRole()) : -1,
+		Actor ? static_cast<int32>(Actor->GetRemoteRole()) : -1,
+		Pawn ? Pawn->IsLocallyControlled() : false,
+		Actor ? Actor->HasAuthority() : false);
+}
+
 USP_PredictionComponent::USP_PredictionComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -284,6 +324,111 @@ bool USP_PredictionComponent::ConsumePendingPredictedReaction(const FSP_Reaction
 	return false;
 }
 
+void USP_PredictionComponent::RemoveExpiredDeferredPredictedReactionCorrections()
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		DeferredPredictedReactionCorrections.Reset();
+		return;
+	}
+
+	const double Now = World->GetTimeSeconds();
+
+	for (int32 Index = DeferredPredictedReactionCorrections.Num() - 1; Index >= 0; --Index)
+	{
+		const FSP_DeferredPredictedReactionCorrection& Entry =
+			DeferredPredictedReactionCorrections[Index];
+
+		const bool bExpired = Now - Entry.TimeSeconds > DeferredPredictedCorrectionTimeout;
+		const bool bInvalid =
+			!Entry.TargetActor.IsValid() ||
+			!Entry.ReactionTag.IsValid() ||
+			Entry.PredictionId == INDEX_NONE;
+
+		if (bExpired || bInvalid)
+		{
+			DeferredPredictedReactionCorrections.RemoveAtSwap(Index);
+		}
+	}
+}
+
+void USP_PredictionComponent::AddDeferredPredictedReactionCorrection(
+	const FSP_ReactionPredictionContext& Context,
+	AActor* TargetActor,
+	FGameplayTag ReactionTag)
+{
+	if (!Context.IsValid() || !TargetActor || !ReactionTag.IsValid())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	RemoveExpiredDeferredPredictedReactionCorrections();
+
+	FSP_DeferredPredictedReactionCorrection& Entry =
+		DeferredPredictedReactionCorrections.AddDefaulted_GetRef();
+
+	Entry.TargetActor = TargetActor;
+	Entry.ReactionTag = ReactionTag;
+	Entry.PredictionId = Context.PredictionId;
+	Entry.TimeSeconds = World->GetTimeSeconds();
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP AddDeferredPredictedReactionCorrection Target=%s Tag=%s PredictionId=%d Time=%.3f"),
+		*GetNameSafe(TargetActor),
+		*ReactionTag.ToString(),
+		Context.PredictionId,
+		Entry.TimeSeconds);
+}
+
+bool USP_PredictionComponent::ConsumeDeferredPredictedReactionCorrection(
+	const FSP_ReactionPredictionContext& Context,
+	AActor* TargetActor,
+	FGameplayTag ReactionTag)
+{
+	if (!Context.IsValid() || !TargetActor || !ReactionTag.IsValid())
+	{
+		return false;
+	}
+
+	RemoveExpiredDeferredPredictedReactionCorrections();
+
+	for (int32 Index = DeferredPredictedReactionCorrections.Num() - 1; Index >= 0; --Index)
+	{
+		const FSP_DeferredPredictedReactionCorrection& Entry =
+			DeferredPredictedReactionCorrections[Index];
+
+		if (Entry.TargetActor.Get() == TargetActor &&
+			Entry.ReactionTag == ReactionTag &&
+			Entry.PredictionId == Context.PredictionId)
+		{
+			DeferredPredictedReactionCorrections.RemoveAtSwap(Index);
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("SP ConsumeDeferredPredictedReactionCorrection SUCCESS Target=%s Tag=%s PredictionId=%d"),
+				*GetNameSafe(TargetActor),
+				*ReactionTag.ToString(),
+				Context.PredictionId);
+
+			return true;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP ConsumeDeferredPredictedReactionCorrection FAILED Target=%s Tag=%s PredictionId=%d"),
+		*GetNameSafe(TargetActor),
+		*ReactionTag.ToString(),
+		Context.PredictionId);
+
+	return false;
+}
+
 float USP_PredictionComponent::GetReactionStartPosition(
 	const FSP_ReactionDataEntry& Reaction) const
 {
@@ -398,16 +543,15 @@ bool USP_PredictionComponent::PlayReactionMontageOnActor(AActor* TargetActor, co
 				const UCharacterMovementComponent* MovementComponent =
 					TimerTargetCharacter->GetCharacterMovement();
 
-				const FString VelocityString = MovementComponent
-					? MovementComponent->Velocity.ToString()
-					: TEXT("None");
+				const FVector Velocity = MovementComponent
+					? MovementComponent->Velocity
+					: FVector::ZeroVector;
 
 				UE_LOG(LogTemp, Warning,
-					TEXT("SP ReactionLocation Target=%s Loc=%s Velocity=%s Role=%d"),
-					*GetNameSafe(TimerTargetActor),
+					TEXT("SP ReactionLocation %s Loc=%s Velocity=%s"),
+					*SP_GetNetDebugPrefix(TimerTargetActor, TimerTargetActor),
 					*TimerTargetActor->GetActorLocation().ToString(),
-					*VelocityString,
-					static_cast<int32>(TimerTargetActor->GetLocalRole()));
+					*Velocity.ToString());
 
 				++(*TickCount);
 
@@ -493,6 +637,53 @@ void USP_PredictionComponent::ServerConfirmPredictedReaction_Implementation(FSP_
 	const float ServerStartTime = GetServerWorldTimeSecondsSafe();
 
 	MulticastPlayConfirmedReaction(Context, TargetActor, ReactionTag, ServerStartTime);
+
+	const float MontageLength = Reaction.Montage
+		? Reaction.Montage->GetPlayLength()
+		: 0.f;
+
+	const float PlayRate = FMath::Max(Reaction.PlayRate, KINDA_SMALL_NUMBER);
+	const float RemainingDuration =
+		FMath::Max(0.05f, (MontageLength - StartPosition) / PlayRate);
+
+	if (UWorld* World = GetWorld())
+	{
+		TWeakObjectPtr<USP_PredictionComponent> WeakThis(this);
+		TWeakObjectPtr<AActor> WeakTarget(TargetActor);
+		const FSP_ReactionPredictionContext CapturedContext = Context;
+		const FGameplayTag CapturedReactionTag = ReactionTag;
+
+		FTimerHandle TimerHandle;
+
+		World->GetTimerManager().SetTimer(
+			TimerHandle,
+			[WeakThis, WeakTarget, CapturedContext, CapturedReactionTag]()
+			{
+				USP_PredictionComponent* StrongThis = WeakThis.Get();
+				AActor* StrongTarget = WeakTarget.Get();
+
+				if (!StrongThis || !StrongTarget)
+				{
+					return;
+				}
+
+				const FVector ServerFinalLocation = StrongTarget->GetActorLocation();
+
+				UE_LOG(LogTemp, Warning,
+					TEXT("SP Server final reaction correction Target=%s Loc=%s PredictionId=%d"),
+					*GetNameSafe(StrongTarget),
+					*ServerFinalLocation.ToString(),
+					CapturedContext.PredictionId);
+
+				StrongThis->MulticastFinishConfirmedReaction(
+					CapturedContext,
+					StrongTarget,
+					CapturedReactionTag,
+					ServerFinalLocation);
+			},
+			RemainingDuration,
+			false);
+	}
 }
 
 void USP_PredictionComponent::MulticastPlayConfirmedReaction_Implementation(FSP_ReactionPredictionContext Context,
@@ -512,8 +703,10 @@ void USP_PredictionComponent::MulticastPlayConfirmedReaction_Implementation(FSP_
 
 	if (ConsumePendingPredictedReaction(Context, TargetActor, ReactionTag))
 	{
+		AddDeferredPredictedReactionCorrection(Context, TargetActor, ReactionTag);
+
 		UE_LOG(LogTemp, Warning,
-			TEXT("SP Multicast confirmed reaction consumed predicted local replay Owner=%s Target=%s Tag=%s PredictionId=%d"),
+			TEXT("SP Multicast confirmed reaction consumed predicted local replay and deferred final correction Owner=%s Target=%s Tag=%s PredictionId=%d"),
 			*GetNameSafe(OwnerActor),
 			*GetNameSafe(TargetActor),
 			*ReactionTag.ToString(),
@@ -562,6 +755,70 @@ void USP_PredictionComponent::MulticastPlayConfirmedReaction_Implementation(FSP_
 		Context.PredictionId);
 }
 
+void USP_PredictionComponent::MulticastFinishConfirmedReaction_Implementation(
+	FSP_ReactionPredictionContext Context,
+	AActor* TargetActor,
+	FGameplayTag ReactionTag,
+	FVector ServerFinalLocation)
+{
+	AActor* OwnerActor = GetOwner();
+
+	if (!OwnerActor || OwnerActor->HasAuthority())
+	{
+		return;
+	}
+
+	if (!TargetActor || !ReactionTag.IsValid())
+	{
+		return;
+	}
+
+	// Do not force-correct the locally controlled victim here.
+	// This test is for the predicted proxy path first.
+	const APawn* TargetPawn = Cast<APawn>(TargetActor);
+	if (TargetPawn && TargetPawn->IsLocallyControlled())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP FinalCorrection skipped locally controlled target Target=%s PredictionId=%d"),
+			*GetNameSafe(TargetActor),
+			Context.PredictionId);
+
+		return;
+	}
+
+	if (!ConsumeDeferredPredictedReactionCorrection(Context, TargetActor, ReactionTag))
+	{
+		return;
+	}
+
+	const FVector ClientFinalLocation = TargetActor->GetActorLocation();
+	const FVector Delta = ServerFinalLocation - ClientFinalLocation;
+	const float Distance = Delta.Size();
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP FinalCorrection Target=%s ClientLoc=%s ServerLoc=%s Delta=%s Distance=%.2f PredictionId=%d"),
+		*GetNameSafe(TargetActor),
+		*ClientFinalLocation.ToString(),
+		*ServerFinalLocation.ToString(),
+		*Delta.ToString(),
+		Distance,
+		Context.PredictionId);
+
+	if (Distance <= FinalCorrectionTolerance)
+	{
+		return;
+	}
+
+	// First test: only correct at the end, not mid-animation.
+	// Small errors snap cleanly. Bigger errors use SetActorLocation too for now,
+	// because we first need to prove the timing idea works.
+	TargetActor->SetActorLocation(
+		ServerFinalLocation,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+}
+
 void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FSP_ReactionPredictionContext Context,
 	AActor* ExpectedTargetActor, AActor* InstigatorActor, FGameplayTag ReactionTag)
 {
@@ -572,12 +829,20 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 		return;
 	}
 
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP ClientOwnerReaction ENTER %s ExpectedTarget=%s Instigator=%s Tag=%s PredictionId=%d"),
+		*SP_GetNetDebugPrefix(this, OwnerActor),
+		*GetNameSafe(ExpectedTargetActor),
+		*GetNameSafe(InstigatorActor),
+		*ReactionTag.ToString(),
+		Context.PredictionId);
+
 	APawn* OwnerPawn = Cast<APawn>(OwnerActor);
 	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("SP ClientOwnerReaction skipped non locally controlled owner Owner=%s Instigator=%s PredictionId=%d"),
-			*GetNameSafe(OwnerActor),
+			TEXT("SP ClientOwnerReaction skipped non locally controlled owner %s Instigator=%s PredictionId=%d"),
+			*SP_GetNetDebugPrefix(this, OwnerActor),
 			*GetNameSafe(InstigatorActor),
 			Context.PredictionId);
 
@@ -587,8 +852,8 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 	if (OwnerActor == InstigatorActor)
 	{
 		UE_LOG(LogTemp, Error,
-			TEXT("SP ClientOwnerReaction blocked because OwnerActor == InstigatorActor Owner=%s PredictionId=%d"),
-			*GetNameSafe(OwnerActor),
+			TEXT("SP ClientOwnerReaction blocked because OwnerActor == InstigatorActor %s PredictionId=%d"),
+			*SP_GetNetDebugPrefix(this, OwnerActor),
 			Context.PredictionId);
 
 		return;
@@ -597,8 +862,8 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 	if (OwnerActor != ExpectedTargetActor)
 	{
 		UE_LOG(LogTemp, Error,
-			TEXT("SP ClientOwnerReaction WRONG OWNER ComponentOwner=%s ExpectedTarget=%s Instigator=%s PredictionId=%d"),
-			*GetNameSafe(OwnerActor),
+			TEXT("SP ClientOwnerReaction WRONG OWNER %s ExpectedTarget=%s Instigator=%s PredictionId=%d"),
+			*SP_GetNetDebugPrefix(this, OwnerActor),
 			*GetNameSafe(ExpectedTargetActor),
 			*GetNameSafe(InstigatorActor),
 			Context.PredictionId);
@@ -614,8 +879,8 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 	if (ConsumePendingPredictedReaction(Context, OwnerActor, ReactionTag))
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("SP Client owner confirmed reaction consumed predicted local replay Owner=%s Tag=%s PredictionId=%d"),
-			*GetNameSafe(OwnerActor),
+			TEXT("SP Client owner confirmed reaction consumed predicted local replay %s Tag=%s PredictionId=%d"),
+			*SP_GetNetDebugPrefix(this, OwnerActor),
 			*ReactionTag.ToString(),
 			Context.PredictionId);
 
@@ -634,8 +899,9 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 		true);
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("SP Client owner confirmed reaction Owner=%s Instigator=%s Tag=%s Played=%d PredictionId=%d"),
-		*GetNameSafe(OwnerActor),
+		TEXT("SP ClientOwnerReaction PLAYED %s ExpectedTarget=%s Instigator=%s Tag=%s Played=%d PredictionId=%d"),
+		*SP_GetNetDebugPrefix(this, OwnerActor),
+		*GetNameSafe(ExpectedTargetActor),
 		*GetNameSafe(InstigatorActor),
 		*ReactionTag.ToString(),
 		bPlayed,

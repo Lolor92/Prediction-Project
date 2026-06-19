@@ -39,6 +39,24 @@ struct FSP_PendingPredictedReaction
 	double TimeSeconds = 0.0;
 };
 
+USTRUCT()
+struct FSP_DeferredPredictedReactionCorrection
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TWeakObjectPtr<AActor> TargetActor;
+
+	UPROPERTY()
+	FGameplayTag ReactionTag;
+
+	UPROPERTY()
+	int32 PredictionId = INDEX_NONE;
+
+	UPROPERTY()
+	double TimeSeconds = 0.0;
+};
+
 UCLASS(ClassGroup=(SyncPrediction), meta=(BlueprintSpawnableComponent))
 class SYNCPREDICTION_API USP_PredictionComponent : public UActorComponent
 {
@@ -60,6 +78,10 @@ public:
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastPlayConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* TargetActor,
 		FGameplayTag ReactionTag, float ServerStartTime);
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastFinishConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* TargetActor,
+		FGameplayTag ReactionTag, FVector ServerFinalLocation);
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayOwnerConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* ExpectedTargetActor,
@@ -83,8 +105,20 @@ private:
 	UPROPERTY(Transient)
 	TArray<FSP_PendingPredictedReaction> PendingPredictedReactions;
 
+	UPROPERTY(Transient)
+	TArray<FSP_DeferredPredictedReactionCorrection> DeferredPredictedReactionCorrections;
+
 	UPROPERTY(EditAnywhere, Category="SyncPrediction|Reaction", meta=(ClampMin="0.0", Units="Seconds"))
 	float PendingPredictedReactionTimeout = 2.0f;
+
+	UPROPERTY(EditAnywhere, Category="SyncPrediction|Reaction", meta=(ClampMin="0.0", Units="Seconds"))
+	float DeferredPredictedCorrectionTimeout = 3.0f;
+
+	UPROPERTY(EditAnywhere, Category="SyncPrediction|Reaction", meta=(ClampMin="0.0", Units="Centimeters"))
+	float FinalCorrectionTolerance = 2.0f;
+
+	UPROPERTY(EditAnywhere, Category="SyncPrediction|Reaction", meta=(ClampMin="0.0", Units="Centimeters"))
+	float MaxInstantFinalCorrectionDistance = 35.0f;
 
 	FSP_ReactionPredictionContext MakeReactionPredictionContext();
 
@@ -95,6 +129,14 @@ private:
 		FGameplayTag ReactionTag);
 
 	void RemoveExpiredPendingPredictedReactions();
+
+	void AddDeferredPredictedReactionCorrection(const FSP_ReactionPredictionContext& Context, AActor* TargetActor,
+		FGameplayTag ReactionTag);
+
+	bool ConsumeDeferredPredictedReactionCorrection(const FSP_ReactionPredictionContext& Context, AActor* TargetActor,
+		FGameplayTag ReactionTag);
+
+	void RemoveExpiredDeferredPredictedReactionCorrections();
 
 	bool PlayReactionMontageOnActor(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction, float StartPosition,
 		bool bForceRestart) const;
