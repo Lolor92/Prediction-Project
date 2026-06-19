@@ -1,18 +1,19 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
+#include "Abilities/SP_ReactionGameplayAbility.h"
 #include "PL_GameplayAbility.generated.h"
 
 
 UCLASS()
-class PROJECTLOGOS_API UPL_GameplayAbility : public UGameplayAbility
+class PROJECTLOGOS_API UPL_GameplayAbility : public USP_ReactionGameplayAbility
 {
 	GENERATED_BODY()
-	
+
 public:
 	UPL_GameplayAbility();
-	
+
 	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayTagContainer* SourceTags = nullptr, const FGameplayTagContainer* TargetTags = nullptr,
 		FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;

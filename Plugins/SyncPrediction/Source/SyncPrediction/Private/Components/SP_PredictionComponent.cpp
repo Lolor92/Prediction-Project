@@ -1,4 +1,4 @@
-﻿#include "Components/SP_PredictionComponent.h"
+#include "Components/SP_PredictionComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "GameFramework/Character.h"
@@ -10,6 +10,70 @@ USP_PredictionComponent::USP_PredictionComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
+}
+
+void USP_PredictionComponent::BeginPlay()
+{
+	Super::BeginPlay();
+	BindToOwnerAnimInstance();
+}
+
+void USP_PredictionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (BoundAnimInstance.IsValid())
+	{
+		BoundAnimInstance->OnMontageStarted.RemoveDynamic(this, &USP_PredictionComponent::HandleOwnerMontageStarted);
+		BoundAnimInstance.Reset();
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void USP_PredictionComponent::BindToOwnerAnimInstance()
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor) return;
+
+	USkeletalMeshComponent* MeshComp = nullptr;
+
+	if (const ACharacter* CharacterOwner = Cast<ACharacter>(OwnerActor))
+	{
+		MeshComp = CharacterOwner->GetMesh();
+	}
+	else
+	{
+		MeshComp = OwnerActor->FindComponentByClass<USkeletalMeshComponent>();
+	}
+
+	if (!MeshComp) return;
+
+	UAnimInstance* AnimInstance = MeshComp->GetAnimInstance();
+	if (!AnimInstance) return;
+
+	if (BoundAnimInstance.Get() == AnimInstance) return;
+
+	if (BoundAnimInstance.IsValid())
+	{
+		BoundAnimInstance->OnMontageStarted.RemoveDynamic(this, &USP_PredictionComponent::HandleOwnerMontageStarted);
+	}
+
+	BoundAnimInstance = AnimInstance;
+	AnimInstance->OnMontageStarted.AddDynamic(this, &USP_PredictionComponent::HandleOwnerMontageStarted);
+
+	UE_LOG(LogTemp, Warning, TEXT("SP Bound montage start Owner=%s AnimInstance=%s"),
+		*GetNameSafe(OwnerActor), *GetNameSafe(AnimInstance));
+}
+
+void USP_PredictionComponent::HandleOwnerMontageStarted(UAnimMontage* Montage)
+{
+	AActor* OwnerActor = GetOwner();
+
+	UE_LOG(LogTemp, Warning, TEXT("SP MontageStarted Owner=%s Montage=%s LocalRole=%d RemoteRole=%d HasAuthority=%d"),
+		*GetNameSafe(OwnerActor),
+		*GetNameSafe(Montage),
+		OwnerActor ? static_cast<int32>(OwnerActor->GetLocalRole()) : -1,
+		OwnerActor ? static_cast<int32>(OwnerActor->GetRemoteRole()) : -1,
+		OwnerActor ? OwnerActor->HasAuthority() : false);
 }
 
 bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetActor, FGameplayTag ReactionTag)
@@ -52,6 +116,11 @@ bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetA
 	if (PlayedLength <= 0.f)
 	{
 		return false;
+	}
+
+	if (USP_PredictionComponent* TargetPredictionComponent = TargetActor->FindComponentByClass<USP_PredictionComponent>())
+	{
+		TargetPredictionComponent->AddPendingPredictedReaction(TargetActor, ReactionTag);
 	}
 
 	if (Reaction.StartSection != NAME_None)
@@ -169,4 +238,55 @@ bool USP_PredictionComponent::CanPlayPredictedReactionOnTargetProxy(AActor* Targ
 	}
 
 	return true;
+}
+
+void USP_PredictionComponent::AddPendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag)
+{
+	if (!TargetActor || !ReactionTag.IsValid()) return;
+
+	UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.f;
+
+	PendingPredictedReactions.RemoveAll([this, Now](const FSP_PendingPredictedReaction& Entry)
+	{
+		return !Entry.TargetActor.IsValid() || Now - Entry.TimeSeconds > PendingPredictedReactionTimeout;
+	});
+
+	FSP_PendingPredictedReaction& Entry = PendingPredictedReactions.AddDefaulted_GetRef();
+	Entry.TargetActor = TargetActor;
+	Entry.ReactionTag = ReactionTag;
+	Entry.TimeSeconds = Now;
+
+	UE_LOG(LogTemp, Warning, TEXT("SP AddPendingPredictedReaction Target=%s Tag=%s Time=%.3f"),
+		*GetNameSafe(TargetActor), *ReactionTag.ToString(), Now);
+}
+
+bool USP_PredictionComponent::ConsumePendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag)
+{
+	if (!TargetActor || !ReactionTag.IsValid()) return false;
+
+	UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.f;
+
+	for (int32 Index = PendingPredictedReactions.Num() - 1; Index >= 0; --Index)
+	{
+		const FSP_PendingPredictedReaction& Entry = PendingPredictedReactions[Index];
+
+		if (!Entry.TargetActor.IsValid() || Now - Entry.TimeSeconds > PendingPredictedReactionTimeout)
+		{
+			PendingPredictedReactions.RemoveAtSwap(Index);
+			continue;
+		}
+
+		if (Entry.TargetActor.Get() == TargetActor && Entry.ReactionTag == ReactionTag)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SP ConsumePendingPredictedReaction SUCCESS Target=%s Tag=%s Time=%.3f"),
+				*GetNameSafe(TargetActor), *ReactionTag.ToString(), Now);
+
+			PendingPredictedReactions.RemoveAtSwap(Index);
+			return true;
+		}
+	}
+
+	return false;
 }

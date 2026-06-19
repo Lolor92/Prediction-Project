@@ -7,6 +7,23 @@
 #include "SP_PredictionComponent.generated.h"
 
 class AActor;
+class UAnimInstance;
+class UAnimMontage;
+
+USTRUCT()
+struct FSP_PendingPredictedReaction
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TWeakObjectPtr<AActor> TargetActor;
+
+	UPROPERTY()
+	FGameplayTag ReactionTag;
+
+	UPROPERTY()
+	float TimeSeconds = 0.f;
+};
 
 UCLASS(ClassGroup=(SyncPrediction), meta=(BlueprintSpawnableComponent))
 class SYNCPREDICTION_API USP_PredictionComponent : public UActorComponent
@@ -22,6 +39,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SyncPrediction|Reaction")
 	bool ApplyReactionEffectsToTarget(AActor* TargetActor, FGameplayTag ReactionTag);
 
+	void AddPendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag);
+	bool ConsumePendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag);
+
+protected:
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	UPROPERTY(EditAnywhere, Category="Sync Prediction|Reaction")
+	float PendingPredictedReactionTimeout = 1.0f;
+
 private:
 	bool CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction) const;
 
@@ -30,4 +57,13 @@ private:
 
 	UPROPERTY(Transient)
 	mutable TMap<TWeakObjectPtr<AActor>, double> LastReactionTimeByTarget;
+
+	UPROPERTY(Transient)
+	TArray<FSP_PendingPredictedReaction> PendingPredictedReactions;
+
+	TWeakObjectPtr<UAnimInstance> BoundAnimInstance;
+
+	void BindToOwnerAnimInstance();
+	UFUNCTION()
+	void HandleOwnerMontageStarted(UAnimMontage* Montage);
 };
