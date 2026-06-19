@@ -9,8 +9,19 @@ USP_PredictionComponent::USP_PredictionComponent()
 	SetIsReplicatedByDefault(true);
 }
 
-bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction)
+bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetActor, FGameplayTag ReactionTag)
 {
+	if (!ReactionData || !ReactionTag.IsValid())
+	{
+		return false;
+	}
+
+	FSP_ReactionDataEntry Reaction;
+	if (!ReactionData->FindReaction(ReactionTag, Reaction))
+	{
+		return false;
+	}
+
 	if (!CanPlayPredictedReactionOnTargetProxy(TargetActor, Reaction))
 	{
 		return false;

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
@@ -16,10 +16,13 @@ public:
 	USP_PredictionComponent();
 
 	UFUNCTION(BlueprintCallable, Category = "SyncPrediction|Reaction")
-	bool PlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction);
+	bool PlayPredictedReactionOnTargetProxy(AActor* TargetActor, FGameplayTag ReactionTag);
 
 private:
 	bool CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction) const;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SyncPrediction|Reaction", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USP_ReactionData> ReactionData = nullptr;
 
 	UPROPERTY(Transient)
 	mutable TMap<TWeakObjectPtr<AActor>, double> LastReactionTimeByTarget;

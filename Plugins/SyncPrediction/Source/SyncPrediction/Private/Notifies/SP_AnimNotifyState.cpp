@@ -1,4 +1,4 @@
-﻿#include "Notifies/SP_AnimNotifyState.h"
+#include "Notifies/SP_AnimNotifyState.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SP_PredictionComponent.h"
 #include "Data/SP_ReactionData.h"
@@ -10,7 +10,7 @@ void USP_AnimNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSeq
 	float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
-	
+
 	if (!MeshComp) return;
 
 	AActor* OwnerActor = MeshComp->GetOwner();
@@ -30,7 +30,7 @@ void USP_AnimNotifyState::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequ
 	float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
-	
+
 	if (!MeshComp) return;
 
 	FTransform* PreviousTransform = PreviousTransforms.Find(MeshComp);
@@ -48,7 +48,7 @@ void USP_AnimNotifyState::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSeque
 	const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
-	
+
 	if (MeshComp)
 	{
 		PreviousTransforms.Remove(MeshComp);
@@ -69,10 +69,10 @@ bool USP_AnimNotifyState::ShouldRunPredictedCollision(const AActor* OwnerActor) 
 	if (!OwnerActor) return false;
 
 	if (OwnerActor->HasAuthority()) return true;
-	
+
 	const APawn* OwnerPawn = Cast<APawn>(OwnerActor);
 	if (OwnerPawn && OwnerPawn->IsLocallyControlled()) return true;
-	
+
 	return false;
 }
 
@@ -160,7 +160,7 @@ void USP_AnimNotifyState::SweepCollision(USkeletalMeshComponent* MeshComp, const
 			*GetNameSafe(OwnerActor),
 			*GetNameSafe(HitActor),
 			*Hit.ImpactPoint.ToString());
-		
+
 		TryPlayPredictedReaction(OwnerActor, HitActor);
 	}
 }
@@ -185,15 +185,11 @@ void USP_AnimNotifyState::TryPlayPredictedReaction(AActor* AttackerActor, AActor
 	const APawn* HitPawn = Cast<APawn>(HitActor);
 	if (HitPawn && HitPawn->IsLocallyControlled()) return;
 
-	if (!ReactionData || !PredictedReactionTag.IsValid()) return;
-
-	FSP_ReactionDataEntry ReactionEntry;
-	if (!ReactionData->FindReaction(PredictedReactionTag, ReactionEntry)) return;
-
-	USP_PredictionComponent* PredictionComponent =
-		AttackerActor->FindComponentByClass<USP_PredictionComponent>();
+	USP_PredictionComponent* PredictionComponent = AttackerActor->FindComponentByClass<USP_PredictionComponent>();
 
 	if (!PredictionComponent) return;
 
-	PredictionComponent->PlayPredictedReactionOnTargetProxy(HitActor, ReactionEntry);
+	if (!PredictedReactionTag.IsValid()) return;
+
+	PredictionComponent->PlayPredictedReactionOnTargetProxy(HitActor, PredictedReactionTag);
 }

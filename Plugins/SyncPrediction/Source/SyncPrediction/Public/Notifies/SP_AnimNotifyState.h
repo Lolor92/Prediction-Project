@@ -37,10 +37,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sync Prediction|Predicted Reaction")
 	bool bPlayPredictedReactionOnClient = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SyncPrediction|Predicted Reaction", meta=(EditCondition="bPlayPredictedReactionOnClient"))
-	TObjectPtr<USP_ReactionData> ReactionData = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SyncPrediction|Predicted Reaction", meta=(EditCondition="bPlayPredictedReactionOnClient"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Prediction|Predicted Reaction", meta=(EditCondition="bPlayPredictedReactionOnClient"))
 	FGameplayTag PredictedReactionTag;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Prediction|Socket")
