@@ -910,8 +910,17 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 		*ReactionTag.ToString(),
 		Context.PredictionId);
 
-	const APawn* OwnerPawn = Cast<APawn>(OwnerActor);
-	const bool bLocalOwner = OwnerPawn && OwnerPawn->IsLocallyControlled();
+	APawn* OwnerPawn = Cast<APawn>(OwnerActor);
+	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP ClientOwnerReaction skipped non locally controlled owner %s Instigator=%s PredictionId=%d"),
+			*SP_GetNetDebugPrefix(this, OwnerActor),
+			*GetNameSafe(InstigatorActor),
+			Context.PredictionId);
+
+		return;
+	}
 
 	if (OwnerActor == InstigatorActor)
 	{
@@ -940,14 +949,11 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 		return;
 	}
 
-	const bool bConsumedPending = ConsumePendingPredictedReaction(Context, OwnerActor, ReactionTag);
-
-	if (bLocalOwner && !bConsumedPending)
+	if (ConsumePendingPredictedReaction(Context, OwnerActor, ReactionTag))
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("SP ClientOwnerReaction skipped local owner with no pending predicted reaction Owner=%s Instigator=%s Tag=%s PredictionId=%d"),
-			*GetNameSafe(OwnerActor),
-			*GetNameSafe(InstigatorActor),
+			TEXT("SP Client owner confirmed reaction consumed predicted local replay %s Tag=%s PredictionId=%d"),
+			*SP_GetNetDebugPrefix(this, OwnerActor),
 			*ReactionTag.ToString(),
 			Context.PredictionId);
 
