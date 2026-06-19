@@ -53,6 +53,40 @@ UAttributeSet* APL_BaseCharacter::GetAttributeSet() const
 	return PL_PlayerState ? PL_PlayerState->GetAttributeSet() : nullptr;
 }
 
+void APL_BaseCharacter::OnRep_ReplicatedMovement()
+{
+	const FVector BeforeLocation = GetActorLocation();
+
+	Super::OnRep_ReplicatedMovement();
+
+	const FVector AfterLocation = GetActorLocation();
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP OnRep_ReplicatedMovement Actor=%s Before=%s After=%s Delta=%s Role=%d"),
+		*GetNameSafe(this),
+		*BeforeLocation.ToString(),
+		*AfterLocation.ToString(),
+		*(AfterLocation - BeforeLocation).ToString(),
+		static_cast<int32>(GetLocalRole()));
+}
+
+void APL_BaseCharacter::PostNetReceiveLocationAndRotation()
+{
+	const FVector BeforeLocation = GetActorLocation();
+
+	Super::PostNetReceiveLocationAndRotation();
+
+	const FVector AfterLocation = GetActorLocation();
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP PostNetReceiveLocationAndRotation Actor=%s Before=%s After=%s Delta=%s Role=%d"),
+		*GetNameSafe(this),
+		*BeforeLocation.ToString(),
+		*AfterLocation.ToString(),
+		*(AfterLocation - BeforeLocation).ToString(),
+		static_cast<int32>(GetLocalRole()));
+}
+
 void APL_BaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);

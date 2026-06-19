@@ -7,6 +7,38 @@
 
 class AActor;
 
+USTRUCT(BlueprintType)
+struct FSP_ReactionPredictionContext
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 PredictionId = INDEX_NONE;
+
+	bool IsValid() const
+	{
+		return PredictionId != INDEX_NONE;
+	}
+};
+
+USTRUCT()
+struct FSP_PendingPredictedReaction
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TWeakObjectPtr<AActor> TargetActor;
+
+	UPROPERTY()
+	FGameplayTag ReactionTag;
+
+	UPROPERTY()
+	int32 PredictionId = INDEX_NONE;
+
+	UPROPERTY()
+	double TimeSeconds = 0.0;
+};
+
 UCLASS(ClassGroup=(SyncPrediction), meta=(BlueprintSpawnableComponent))
 class SYNCPREDICTION_API USP_PredictionComponent : public UActorComponent
 {
@@ -21,14 +53,53 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SyncPrediction|Reaction")
 	bool ApplyReactionEffectsToTarget(AActor* TargetActor, FGameplayTag ReactionTag);
 
+	UFUNCTION(Server, Reliable)
+	void ServerConfirmPredictedReaction(FSP_ReactionPredictionContext Context, AActor* TargetActor,
+		FGameplayTag ReactionTag);
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastPlayConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* TargetActor,
+		FGameplayTag ReactionTag, float ServerStartTime);
+
+	UFUNCTION(Client, Reliable)
+	void ClientPlayOwnerConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* InstigatorActor,
+		FGameplayTag ReactionTag);
+
 private:
-	bool CanPlayPredictedReactionOnTargetProxy(
-		AActor* TargetActor,
-		const FSP_ReactionDataEntry& Reaction) const;
+	bool CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction) const;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SyncPrediction|Reaction", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USP_ReactionData> ReactionData = nullptr;
 
 	UPROPERTY(Transient)
 	mutable TMap<TWeakObjectPtr<AActor>, double> LastReactionTimeByTarget;
+
+	static constexpr int32 MaxPredictionId = 32767;
+	static constexpr int32 MaxPendingPredictedReactions = 32;
+
+	UPROPERTY(Transient)
+	int32 NextPredictionId = 0;
+
+	UPROPERTY(Transient)
+	TArray<FSP_PendingPredictedReaction> PendingPredictedReactions;
+
+	UPROPERTY(EditAnywhere, Category="SyncPrediction|Reaction", meta=(ClampMin="0.0", Units="Seconds"))
+	float PendingPredictedReactionTimeout = 2.0f;
+
+	FSP_ReactionPredictionContext MakeReactionPredictionContext();
+
+	void AddPendingPredictedReaction(const FSP_ReactionPredictionContext& Context, AActor* TargetActor,
+		FGameplayTag ReactionTag);
+
+	bool ConsumePendingPredictedReaction(const FSP_ReactionPredictionContext& Context, AActor* TargetActor,
+		FGameplayTag ReactionTag);
+
+	void RemoveExpiredPendingPredictedReactions();
+
+	bool PlayReactionMontageOnActor(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction, float StartPosition,
+		bool bForceRestart) const;
+
+	float GetReactionStartPosition(const FSP_ReactionDataEntry& Reaction) const;
+
+	float GetServerWorldTimeSecondsSafe() const;
 };

@@ -19,6 +19,9 @@ public:
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 	UAttributeSet* GetAttributeSet() const;
 
+	virtual void OnRep_ReplicatedMovement() override;
+	virtual void PostNetReceiveLocationAndRotation() override;
+
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
