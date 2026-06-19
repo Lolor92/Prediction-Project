@@ -6,7 +6,6 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
-#include "TimerManager.h"
 
 USP_GameplayAbility::USP_GameplayAbility()
 {
@@ -31,6 +30,7 @@ void USP_GameplayAbility::ActivateAbility(
 	CachedCharacter = Character;
 	bRootMotionStoppedByContact = false;
 	bMovementInputBlockedByContact = false;
+	bContactEventBound = false;
 
 	if (USkeletalMeshComponent* Mesh = Character->GetMesh())
 	{
@@ -75,35 +75,52 @@ void USP_GameplayAbility::StartRootMotionContactCheck()
 		return;
 	}
 
-	UWorld* World = Character->GetWorld();
-	if (!World)
+	UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
+	if (!Capsule)
 	{
 		return;
 	}
 
-	World->GetTimerManager().SetTimer(
-		RootMotionContactTimerHandle,
-		this,
-		&USP_GameplayAbility::CheckRootMotionContact,
-		RootMotionContactCheckInterval,
-		true);
+	if (!bContactEventBound)
+	{
+		Capsule->OnComponentHit.AddDynamic(
+			this,
+			&USP_GameplayAbility::HandleCapsuleHit);
 
-	// Also check immediately, so starting already touching a proxy capsule stops root motion right away.
-	CheckRootMotionContact();
+		bContactEventBound = true;
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP Ability bound capsule contact event Character=%s"),
+			*GetNameSafe(Character));
+	}
+
+	// Important: handles the case where the ability starts while already touching.
+	CheckInitialRootMotionContact();
 }
 
 void USP_GameplayAbility::StopRootMotionContactCheck()
 {
-	if (ACharacter* Character = CachedCharacter.Get())
+	ACharacter* Character = CachedCharacter.Get();
+	if (!Character)
 	{
-		if (UWorld* World = Character->GetWorld())
+		bContactEventBound = false;
+		return;
+	}
+
+	if (UCapsuleComponent* Capsule = Character->GetCapsuleComponent())
+	{
+		if (bContactEventBound)
 		{
-			World->GetTimerManager().ClearTimer(RootMotionContactTimerHandle);
+			Capsule->OnComponentHit.RemoveDynamic(
+				this,
+				&USP_GameplayAbility::HandleCapsuleHit);
 		}
 	}
+
+	bContactEventBound = false;
 }
 
-void USP_GameplayAbility::CheckRootMotionContact()
+void USP_GameplayAbility::CheckInitialRootMotionContact()
 {
 	if (bRootMotionStoppedByContact)
 	{
@@ -123,6 +140,33 @@ void USP_GameplayAbility::CheckRootMotionContact()
 	{
 		StopRootMotionFromContact(BlockingActor, ContactAngle);
 	}
+}
+
+void USP_GameplayAbility::HandleCapsuleHit(
+	UPrimitiveComponent* HitComponent,
+	AActor* OtherActor,
+	UPrimitiveComponent* OtherComp,
+	FVector NormalImpulse,
+	const FHitResult& Hit)
+{
+	if (bRootMotionStoppedByContact)
+	{
+		return;
+	}
+
+	ACharacter* Character = CachedCharacter.Get();
+	if (!Character || !OtherActor || OtherActor == Character)
+	{
+		return;
+	}
+
+	float ContactAngle = 0.f;
+	if (!IsValidRootMotionStopContact(Character, OtherActor, ContactAngle))
+	{
+		return;
+	}
+
+	StopRootMotionFromContact(OtherActor, ContactAngle);
 }
 
 bool USP_GameplayAbility::ShouldStopRootMotionForContact(
@@ -151,15 +195,6 @@ bool USP_GameplayAbility::ShouldStopRootMotionForContact(
 	}
 
 	const FVector CharacterLocation = Character->GetActorLocation();
-
-	const FVector Forward2D =
-		FVector(Character->GetActorForwardVector().X, Character->GetActorForwardVector().Y, 0.f)
-		.GetSafeNormal();
-
-	if (Forward2D.IsNearlyZero())
-	{
-		return false;
-	}
 
 	const float Radius = Capsule->GetScaledCapsuleRadius() + RootMotionContactCapsuleInflation;
 	const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
@@ -190,42 +225,61 @@ bool USP_GameplayAbility::ShouldStopRootMotionForContact(
 	for (const FOverlapResult& Overlap : Overlaps)
 	{
 		AActor* OtherActor = Overlap.GetActor();
-		if (!OtherActor || OtherActor == Character)
-		{
-			continue;
-		}
 
-		const APawn* OtherPawn = Cast<APawn>(OtherActor);
-		if (!OtherPawn)
-		{
-			continue;
-		}
-
-		FVector ToOther = OtherActor->GetActorLocation() - CharacterLocation;
-		ToOther.Z = 0.f;
-
-		if (ToOther.IsNearlyZero())
-		{
-			// Already deeply touching. Treat as valid contact.
-			OutBlockingActor = OtherActor;
-			OutContactAngle = 0.f;
-			return true;
-		}
-
-		ToOther.Normalize();
-
-		const float Dot = FMath::Clamp(FVector::DotProduct(Forward2D, ToOther), -1.f, 1.f);
-		const float AngleDegrees = FMath::RadiansToDegrees(FMath::Acos(Dot));
-
-		if (AngleDegrees <= RootMotionStopContactAngleDegrees)
+		if (IsValidRootMotionStopContact(Character, OtherActor, OutContactAngle))
 		{
 			OutBlockingActor = OtherActor;
-			OutContactAngle = AngleDegrees;
 			return true;
 		}
 	}
 
 	return false;
+}
+
+bool USP_GameplayAbility::IsValidRootMotionStopContact(
+	ACharacter* Character,
+	AActor* OtherActor,
+	float& OutContactAngle) const
+{
+	OutContactAngle = 0.f;
+
+	if (!Character || !OtherActor || OtherActor == Character)
+	{
+		return false;
+	}
+
+	const APawn* OtherPawn = Cast<APawn>(OtherActor);
+	if (!OtherPawn)
+	{
+		return false;
+	}
+
+	FVector Forward2D = Character->GetActorForwardVector();
+	Forward2D.Z = 0.f;
+	Forward2D.Normalize();
+
+	if (Forward2D.IsNearlyZero())
+	{
+		return false;
+	}
+
+	FVector ToOther = OtherActor->GetActorLocation() - Character->GetActorLocation();
+	ToOther.Z = 0.f;
+
+	if (ToOther.IsNearlyZero())
+	{
+		OutContactAngle = 0.f;
+		return true;
+	}
+
+	ToOther.Normalize();
+
+	const float Dot = FMath::Clamp(FVector::DotProduct(Forward2D, ToOther), -1.f, 1.f);
+	const float AngleDegrees = FMath::RadiansToDegrees(FMath::Acos(Dot));
+
+	OutContactAngle = AngleDegrees;
+
+	return AngleDegrees <= RootMotionStopContactAngleDegrees;
 }
 
 void USP_GameplayAbility::StopRootMotionFromContact(

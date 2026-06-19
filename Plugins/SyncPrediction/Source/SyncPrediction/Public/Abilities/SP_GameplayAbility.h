@@ -3,11 +3,12 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "Animation/AnimTypes.h"
-#include "TimerManager.h"
+#include "Engine/HitResult.h"
 #include "SP_GameplayAbility.generated.h"
 
 class ACharacter;
 class AActor;
+class UPrimitiveComponent;
 
 UCLASS()
 class SYNCPREDICTION_API USP_GameplayAbility : public UGameplayAbility
@@ -37,9 +38,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.0", ClampMax="180.0", Units="Degrees"))
 	float RootMotionStopContactAngleDegrees = 60.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.001", Units="Seconds"))
-	float RootMotionContactCheckInterval = 0.01f;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.0", Units="Centimeters"))
 	float RootMotionContactCapsuleInflation = 4.f;
 
@@ -56,17 +54,26 @@ private:
 	UPROPERTY()
 	TWeakObjectPtr<ACharacter> CachedCharacter;
 
-	FTimerHandle RootMotionContactTimerHandle;
-
 	ERootMotionMode::Type PreviousRootMotionMode = ERootMotionMode::RootMotionFromMontagesOnly;
 
 	bool bRootMotionStoppedByContact = false;
 	bool bMovementInputBlockedByContact = false;
+	bool bContactEventBound = false;
 
 	void StartRootMotionContactCheck();
 	void StopRootMotionContactCheck();
 
-	void CheckRootMotionContact();
+	void CheckInitialRootMotionContact();
+
+	UFUNCTION()
+	void HandleCapsuleHit(
+		UPrimitiveComponent* HitComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComp,
+		FVector NormalImpulse,
+		const FHitResult& Hit);
+
+	bool IsValidRootMotionStopContact(ACharacter* Character, AActor* OtherActor, float& OutContactAngle) const;
 	bool ShouldStopRootMotionForContact(ACharacter* Character, AActor*& OutBlockingActor, float& OutContactAngle) const;
 
 	void StopRootMotionFromContact(AActor* BlockingActor, float ContactAngle);
