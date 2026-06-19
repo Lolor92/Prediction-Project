@@ -2,12 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
-#include "Abilities/SP_ReactionGameplayAbility.h"
 #include "PL_GameplayAbility.generated.h"
 
 
 UCLASS()
-class PROJECTLOGOS_API UPL_GameplayAbility : public USP_ReactionGameplayAbility
+class PROJECTLOGOS_API UPL_GameplayAbility : public UGameplayAbility
 {
 	GENERATED_BODY()
 
