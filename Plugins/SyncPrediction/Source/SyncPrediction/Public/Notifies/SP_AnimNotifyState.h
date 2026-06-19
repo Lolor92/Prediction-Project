@@ -1,10 +1,12 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "Engine/EngineTypes.h"
-#include "Types/SP_PredictedReactionTypes.h"
+#include "GameplayTagContainer.h"
 #include "SP_AnimNotifyState.generated.h"
+
+class USP_ReactionData;
 
 UENUM(BlueprintType)
 enum class ESP_CollisionShape : uint8
@@ -18,7 +20,7 @@ UCLASS()
 class SYNCPREDICTION_API USP_AnimNotifyState : public UAnimNotifyState
 {
 	GENERATED_BODY()
-	
+
 public:
 	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration,
 		const FAnimNotifyEventReference& EventReference) override;
@@ -30,8 +32,17 @@ public:
 		const FAnimNotifyEventReference& EventReference) override;
 
 	virtual FString GetNotifyName_Implementation() const override;
-	
-	protected:
+
+protected:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sync Prediction|Predicted Reaction")
+	bool bPlayPredictedReactionOnClient = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SyncPrediction|Predicted Reaction", meta=(EditCondition="bPlayPredictedReactionOnClient"))
+	TObjectPtr<USP_ReactionData> ReactionData = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SyncPrediction|Predicted Reaction", meta=(EditCondition="bPlayPredictedReactionOnClient"))
+	FGameplayTag PredictedReactionTag;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Prediction|Socket")
 	FName SourceSocketName = TEXT("MainHandWeaponSocket");
 
@@ -61,12 +72,6 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Prediction|Debug")
 	bool bDrawDebug = false;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SyncPrediction|Predicted Reaction")
-	bool bPlayPredictedReactionOnClient = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SyncPrediction|Predicted Reaction", meta=(EditCondition="bPlayPredictedReactionOnClient"))
-	FSP_PredictedReactionAnimation PredictedReaction;
 
 private:
 	UPROPERTY(Transient)
@@ -76,6 +81,6 @@ private:
 	bool BuildTraceTransform(USkeletalMeshComponent* MeshComp, FTransform& OutTransform) const;
 	FCollisionShape MakeCollisionShape() const;
 	void SweepCollision(USkeletalMeshComponent* MeshComp, const FTransform& PreviousTransform, const FTransform& CurrentTransform);
-	
+
 	void TryPlayPredictedReaction(AActor* AttackerActor, AActor* HitActor) const;
 };

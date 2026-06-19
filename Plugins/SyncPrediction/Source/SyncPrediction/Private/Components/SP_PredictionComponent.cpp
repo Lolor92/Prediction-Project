@@ -9,18 +9,7 @@ USP_PredictionComponent::USP_PredictionComponent()
 	SetIsReplicatedByDefault(true);
 }
 
-bool USP_PredictionComponent::PlayPredictedReactionMontageOnTarget(AActor* TargetActor, UAnimMontage* Montage, float PlayRate,
-	FName StartSection)
-{
-	FSP_PredictedReactionAnimation Reaction;
-	Reaction.Montage = Montage;
-	Reaction.PlayRate = PlayRate;
-	Reaction.StartSection = StartSection;
-
-	return PlayPredictedReactionOnTargetProxy(TargetActor, Reaction);
-}
-
-bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_PredictedReactionAnimation& Reaction)
+bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction)
 {
 	if (!CanPlayPredictedReactionOnTargetProxy(TargetActor, Reaction))
 	{
@@ -64,7 +53,8 @@ bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetA
 	return true;
 }
 
-bool USP_PredictionComponent::CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_PredictedReactionAnimation& Reaction) const
+bool USP_PredictionComponent::CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor,
+	const FSP_ReactionDataEntry& Reaction) const
 {
 	if (!TargetActor || !Reaction.Montage)
 	{

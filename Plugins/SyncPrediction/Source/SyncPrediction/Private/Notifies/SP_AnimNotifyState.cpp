@@ -1,6 +1,7 @@
 ﻿#include "Notifies/SP_AnimNotifyState.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SP_PredictionComponent.h"
+#include "Data/SP_ReactionData.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -173,20 +174,26 @@ void USP_AnimNotifyState::TryPlayPredictedReaction(AActor* AttackerActor, AActor
 	if (!World || World->GetNetMode() == NM_DedicatedServer) return;
 
 	// Server does not do predicted target animation here.
-	// Server will apply the GameplayEffect and trigger the real reaction.
 	if (AttackerActor->HasAuthority()) return;
 
 	const APawn* AttackerPawn = Cast<APawn>(AttackerActor);
 	if (!AttackerPawn || !AttackerPawn->IsLocallyControlled()) return;
 
-	// We only want to predict reaction on remote targets/proxies.
+	// Only predict reaction on remote targets/proxies.
 	if (HitActor->HasAuthority()) return;
 
 	const APawn* HitPawn = Cast<APawn>(HitActor);
 	if (HitPawn && HitPawn->IsLocallyControlled()) return;
 
-	USP_PredictionComponent* PredictionComponent = AttackerActor->FindComponentByClass<USP_PredictionComponent>();
+	if (!ReactionData || !PredictedReactionTag.IsValid()) return;
+
+	FSP_ReactionDataEntry ReactionEntry;
+	if (!ReactionData->FindReaction(PredictedReactionTag, ReactionEntry)) return;
+
+	USP_PredictionComponent* PredictionComponent =
+		AttackerActor->FindComponentByClass<USP_PredictionComponent>();
+
 	if (!PredictionComponent) return;
 
-	PredictionComponent->PlayPredictedReactionOnTargetProxy(HitActor, PredictedReaction);
+	PredictionComponent->PlayPredictedReactionOnTargetProxy(HitActor, ReactionEntry);
 }
