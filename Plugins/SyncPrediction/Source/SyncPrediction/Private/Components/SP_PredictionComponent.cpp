@@ -85,26 +85,60 @@ void USP_PredictionComponent::HandleOwnerMontageStarted(UAnimMontage* Montage)
 	const FGameplayTag ReactionTag = FindReactionTagForMontage(Montage);
 	if (!ReactionTag.IsValid()) return;
 
-	float PredictedReactionAge = 0.f;
-	if (!ConsumePendingPredictedReaction(OwnerActor, ReactionTag, &PredictedReactionAge)) return;
+	FSP_ActivePredictedReaction* ActiveReaction =
+	FindActivePredictedReaction(OwnerActor, Montage, ReactionTag);
+
+	if (!ActiveReaction) return;
 
 	UAnimInstance* AnimInstance = BoundAnimInstance.Get();
 	if (!AnimInstance) return;
+
+	if (ActiveReaction->bIgnoreNextMontageStarted)
+	{
+		ActiveReaction->bIgnoreNextMontageStarted = false;
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP Ignore local predicted MontageStarted Owner=%s Montage=%s Tag=%s"),
+			*GetNameSafe(OwnerActor),
+			*GetNameSafe(Montage),
+			*ReactionTag.ToString());
+
+		return;
+	}
+
+	const float LocalCosmeticPosition =
+		GetActivePredictedReactionMontagePosition(*ActiveReaction);
 
 	const float MontageLength = Montage->GetPlayLength();
 
 	if (MontageLength <= 0.f) return;
 
-	const float CorrectedMontagePosition = FMath::Clamp(PredictedReactionAge, 0.f,
-		FMath::Max(0.f, MontageLength - KINDA_SMALL_NUMBER));
+	if (LocalCosmeticPosition >= MontageLength - KINDA_SMALL_NUMBER)
+	{
+		AnimInstance->Montage_Stop(0.f, Montage);
+
+		RemoveActivePredictedReaction(OwnerActor, Montage, ReactionTag);
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP Blocked late replicated reaction restart Owner=%s Montage=%s Tag=%s LocalCosmeticPosition=%.3f"),
+			*GetNameSafe(OwnerActor),
+			*GetNameSafe(Montage),
+			*ReactionTag.ToString(),
+			LocalCosmeticPosition);
+
+		return;
+	}
+
+	// The server montage already tried to restart this visual.
+	// Restore the LOCAL predicted cosmetic timeline, not the server timeline.
+	AnimInstance->Montage_SetPosition(Montage, LocalCosmeticPosition);
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("SP Skipped predicted reaction replay Owner=%s Montage=%s Tag=%s Age=%.3f NewPosition=%.3f"),
+		TEXT("SP Ignored replicated reaction restart Owner=%s Montage=%s Tag=%s LocalCosmeticPosition=%.3f"),
 		*GetNameSafe(OwnerActor),
 		*GetNameSafe(Montage),
 		*ReactionTag.ToString(),
-		PredictedReactionAge,
-		CorrectedMontagePosition);
+		LocalCosmeticPosition);
 }
 
 FGameplayTag USP_PredictionComponent::FindReactionTagForMontage(const UAnimMontage* Montage) const
@@ -123,6 +157,118 @@ FGameplayTag USP_PredictionComponent::FindReactionTagForMontage(const UAnimMonta
 	}
 
 	return FGameplayTag();
+}
+
+void USP_PredictionComponent::AddActivePredictedReaction(AActor* TargetActor, UAnimMontage* Montage,
+	FGameplayTag ReactionTag, float MontageStartPositionSeconds)
+{
+	if (!TargetActor || !Montage || !ReactionTag.IsValid()) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	RemoveExpiredActivePredictedReactions();
+
+	RemoveActivePredictedReaction(TargetActor, Montage, ReactionTag);
+
+	FSP_ActivePredictedReaction& ActiveReaction = ActivePredictedReactions.AddDefaulted_GetRef();
+
+	ActiveReaction.TargetActor = TargetActor;
+	ActiveReaction.Montage = Montage;
+	ActiveReaction.ReactionTag = ReactionTag;
+	ActiveReaction.StartTimeSeconds = World->GetTimeSeconds();
+	ActiveReaction.MontageStartPositionSeconds = MontageStartPositionSeconds;
+	ActiveReaction.bIgnoreNextMontageStarted = true;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP AddActivePredictedReaction Target=%s Montage=%s Tag=%s Time=%.3f StartPos=%.3f"),
+		*GetNameSafe(TargetActor),
+		*GetNameSafe(Montage),
+		*ReactionTag.ToString(),
+		ActiveReaction.StartTimeSeconds,
+		MontageStartPositionSeconds);
+}
+
+void USP_PredictionComponent::RemoveActivePredictedReaction(AActor* TargetActor, UAnimMontage* Montage,
+	FGameplayTag ReactionTag)
+{
+	ActivePredictedReactions.RemoveAll(
+		[TargetActor, Montage, ReactionTag](const FSP_ActivePredictedReaction& ActiveReaction)
+		{
+			return ActiveReaction.TargetActor.Get() == TargetActor &&
+				ActiveReaction.Montage == Montage &&
+				ActiveReaction.ReactionTag == ReactionTag;
+		});
+}
+
+FSP_ActivePredictedReaction* USP_PredictionComponent::FindActivePredictedReaction(AActor* TargetActor,
+	UAnimMontage* Montage, FGameplayTag ReactionTag)
+{
+	if (!TargetActor || !Montage || !ReactionTag.IsValid()) return nullptr;
+
+	RemoveExpiredActivePredictedReactions();
+
+	for (FSP_ActivePredictedReaction& ActiveReaction : ActivePredictedReactions)
+	{
+		if (ActiveReaction.TargetActor.Get() == TargetActor &&
+			ActiveReaction.Montage == Montage &&
+			ActiveReaction.ReactionTag == ReactionTag)
+		{
+			return &ActiveReaction;
+		}
+	}
+
+	return nullptr;
+}
+
+void USP_PredictionComponent::RemoveExpiredActivePredictedReactions()
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		ActivePredictedReactions.Reset();
+		return;
+	}
+
+	const float Now = World->GetTimeSeconds();
+
+	for (int32 Index = ActivePredictedReactions.Num() - 1; Index >= 0; --Index)
+	{
+		const FSP_ActivePredictedReaction& ActiveReaction = ActivePredictedReactions[Index];
+
+		const bool bExpired =
+			(Now - ActiveReaction.StartTimeSeconds) > ActivePredictedReactionTimeout;
+
+		const bool bInvalid =
+			!ActiveReaction.TargetActor.IsValid() ||
+			!ActiveReaction.Montage ||
+			!ActiveReaction.ReactionTag.IsValid();
+
+		if (bExpired || bInvalid)
+		{
+			ActivePredictedReactions.RemoveAtSwap(Index);
+		}
+	}
+}
+
+float USP_PredictionComponent::GetActivePredictedReactionMontagePosition(
+	const FSP_ActivePredictedReaction& ActiveReaction) const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !ActiveReaction.Montage)
+	{
+		return 0.f;
+	}
+
+	const float LocalElapsed =
+		World->GetTimeSeconds() - ActiveReaction.StartTimeSeconds;
+
+	const float MontageLength = ActiveReaction.Montage->GetPlayLength();
+
+	return FMath::Clamp(
+		ActiveReaction.MontageStartPositionSeconds + LocalElapsed,
+		0.f,
+		FMath::Max(0.f, MontageLength - KINDA_SMALL_NUMBER));
 }
 
 bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetActor, FGameplayTag ReactionTag)
@@ -161,15 +307,41 @@ bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetA
 		return false;
 	}
 
-	const float PlayedLength = AnimInstance->Montage_Play(Reaction.Montage, Reaction.PlayRate);
-	if (PlayedLength <= 0.f)
+	float MontageStartPositionSeconds = 0.f;
+
+	if (Reaction.StartSection != NAME_None)
 	{
-		return false;
+		const int32 SectionIndex = Reaction.Montage->GetSectionIndex(Reaction.StartSection);
+
+		if (SectionIndex != INDEX_NONE)
+		{
+			float SectionStartTime = 0.f;
+			float SectionEndTime = 0.f;
+			Reaction.Montage->GetSectionStartAndEndTime(SectionIndex, SectionStartTime, SectionEndTime);
+
+			MontageStartPositionSeconds = SectionStartTime;
+		}
 	}
 
-	if (USP_PredictionComponent* TargetPredictionComponent = TargetActor->FindComponentByClass<USP_PredictionComponent>())
+	USP_PredictionComponent* TargetPredictionComponent =
+		TargetActor->FindComponentByClass<USP_PredictionComponent>();
+
+	if (TargetPredictionComponent)
 	{
-		TargetPredictionComponent->AddPendingPredictedReaction(TargetActor, ReactionTag);
+		TargetPredictionComponent->AddActivePredictedReaction(TargetActor, Reaction.Montage, ReactionTag,
+			MontageStartPositionSeconds);
+	}
+
+	const float PlayedLength = AnimInstance->Montage_Play(Reaction.Montage, Reaction.PlayRate);
+
+	if (PlayedLength <= 0.f)
+	{
+		if (TargetPredictionComponent)
+		{
+			TargetPredictionComponent->RemoveActivePredictedReaction(TargetActor, Reaction.Montage, ReactionTag);
+		}
+
+		return false;
 	}
 
 	if (Reaction.StartSection != NAME_None)

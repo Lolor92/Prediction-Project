@@ -25,6 +25,30 @@ struct FSP_PendingPredictedReaction
 	float TimeSeconds = 0.f;
 };
 
+USTRUCT()
+struct FSP_ActivePredictedReaction
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TWeakObjectPtr<AActor> TargetActor;
+
+	UPROPERTY()
+	TObjectPtr<UAnimMontage> Montage = nullptr;
+
+	UPROPERTY()
+	FGameplayTag ReactionTag;
+
+	UPROPERTY()
+	float StartTimeSeconds = 0.f;
+
+	UPROPERTY()
+	float MontageStartPositionSeconds = 0.f;
+
+	UPROPERTY()
+	bool bIgnoreNextMontageStarted = false;
+};
+
 UCLASS(ClassGroup=(SyncPrediction), meta=(BlueprintSpawnableComponent))
 class SYNCPREDICTION_API USP_PredictionComponent : public UActorComponent
 {
@@ -71,4 +95,20 @@ private:
 	void HandleOwnerMontageStarted(UAnimMontage* Montage);
 
 	FGameplayTag FindReactionTagForMontage(const UAnimMontage* Montage) const;
+
+	UPROPERTY(Transient)
+	TArray<FSP_ActivePredictedReaction> ActivePredictedReactions;
+
+	void AddActivePredictedReaction(AActor* TargetActor, UAnimMontage* Montage, FGameplayTag ReactionTag,
+		float MontageStartPositionSeconds);
+
+	void RemoveActivePredictedReaction(AActor* TargetActor, UAnimMontage* Montage,
+		FGameplayTag ReactionTag);
+
+	FSP_ActivePredictedReaction* FindActivePredictedReaction(AActor* TargetActor, UAnimMontage* Montage,
+		FGameplayTag ReactionTag);
+
+	void RemoveExpiredActivePredictedReactions();
+
+	float GetActivePredictedReactionMontagePosition(const FSP_ActivePredictedReaction& ActiveReaction) const;
 };
