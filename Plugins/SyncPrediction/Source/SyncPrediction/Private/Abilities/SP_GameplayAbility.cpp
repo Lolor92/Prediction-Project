@@ -3,6 +3,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/OverlapResult.h"
+#include "GameFramework/Controller.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "TimerManager.h"
@@ -29,6 +30,7 @@ void USP_GameplayAbility::ActivateAbility(
 
 	CachedCharacter = Character;
 	bRootMotionStoppedByContact = false;
+	bMovementInputBlockedByContact = false;
 
 	if (USkeletalMeshComponent* Mesh = Character->GetMesh())
 	{
@@ -50,6 +52,7 @@ void USP_GameplayAbility::EndAbility(
 {
 	StopRootMotionContactCheck();
 	RestoreRootMotionMode();
+	RestoreMovementInputFromContact();
 
 	Super::EndAbility(
 		Handle,
@@ -251,6 +254,11 @@ void USP_GameplayAbility::StopRootMotionFromContact(
 		}
 	}
 
+	if (bBlockMovementInputWhenRootMotionStops)
+	{
+		BlockMovementInputFromContact();
+	}
+
 	bRootMotionStoppedByContact = true;
 
 	UE_LOG(LogTemp, Warning,
@@ -258,6 +266,78 @@ void USP_GameplayAbility::StopRootMotionFromContact(
 		*GetNameSafe(Character),
 		*GetNameSafe(BlockingActor),
 		ContactAngle,
+		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
+		static_cast<int32>(Character->GetLocalRole()),
+		Character->IsLocallyControlled(),
+		Character->HasAuthority());
+}
+
+void USP_GameplayAbility::BlockMovementInputFromContact()
+{
+	if (bMovementInputBlockedByContact)
+	{
+		return;
+	}
+
+	ACharacter* Character = CachedCharacter.Get();
+	if (!Character)
+	{
+		return;
+	}
+
+	AController* Controller = Character->GetController();
+	if (!Controller)
+	{
+		return;
+	}
+
+	Controller->SetIgnoreMoveInput(true);
+	bMovementInputBlockedByContact = true;
+
+	if (UCharacterMovementComponent* MovementComponent = Character->GetCharacterMovement())
+	{
+		MovementComponent->StopMovementImmediately();
+		MovementComponent->Velocity = FVector::ZeroVector;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP Ability blocked movement input from root motion contact Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
+		*GetNameSafe(Character),
+		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
+		static_cast<int32>(Character->GetLocalRole()),
+		Character->IsLocallyControlled(),
+		Character->HasAuthority());
+}
+
+void USP_GameplayAbility::RestoreMovementInputFromContact()
+{
+	if (!bMovementInputBlockedByContact)
+	{
+		return;
+	}
+
+	if (!bRestoreMovementInputWhenAbilityEnds)
+	{
+		return;
+	}
+
+	ACharacter* Character = CachedCharacter.Get();
+	if (!Character)
+	{
+		bMovementInputBlockedByContact = false;
+		return;
+	}
+
+	if (AController* Controller = Character->GetController())
+	{
+		Controller->SetIgnoreMoveInput(false);
+	}
+
+	bMovementInputBlockedByContact = false;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP Ability restored movement input after root motion contact Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
+		*GetNameSafe(Character),
 		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
 		static_cast<int32>(Character->GetLocalRole()),
 		Character->IsLocallyControlled(),

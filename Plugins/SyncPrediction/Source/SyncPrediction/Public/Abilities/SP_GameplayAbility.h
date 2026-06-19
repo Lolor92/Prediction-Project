@@ -46,6 +46,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact"))
 	bool bClearVelocityWhenRootMotionStops = true;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact"))
+	bool bBlockMovementInputWhenRootMotionStops = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bBlockMovementInputWhenRootMotionStops"))
+	bool bRestoreMovementInputWhenAbilityEnds = true;
+
 private:
 	UPROPERTY()
 	TWeakObjectPtr<ACharacter> CachedCharacter;
@@ -55,6 +61,7 @@ private:
 	ERootMotionMode::Type PreviousRootMotionMode = ERootMotionMode::RootMotionFromMontagesOnly;
 
 	bool bRootMotionStoppedByContact = false;
+	bool bMovementInputBlockedByContact = false;
 
 	void StartRootMotionContactCheck();
 	void StopRootMotionContactCheck();
@@ -64,4 +71,6 @@ private:
 
 	void StopRootMotionFromContact(AActor* BlockingActor, float ContactAngle);
 	void RestoreRootMotionMode();
+	void BlockMovementInputFromContact();
+	void RestoreMovementInputFromContact();
 };
