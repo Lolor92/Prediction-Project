@@ -20,7 +20,11 @@ enum class ESP_CollisionShape : uint8
 struct FSP_NotifyRuntimeWindow
 {
 	FGuid WindowId;
+
 	TSet<TWeakObjectPtr<AActor>> ProcessedTargets;
+
+	bool bHasPreviousSweepTransform = false;
+	FTransform PreviousSweepTransform = FTransform::Identity;
 };
 
 UCLASS()
@@ -70,6 +74,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Prediction|Shape")
 	FRotator RelativeRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Prediction|Collision")
+	float MaxSweepStepDistance = 35.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Prediction|Collision")
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Pawn;

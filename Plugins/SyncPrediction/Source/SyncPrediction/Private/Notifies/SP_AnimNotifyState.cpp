@@ -117,65 +117,89 @@ FCollisionShape USP_AnimNotifyState::MakeCollisionShape() const
 	}
 }
 
-void USP_AnimNotifyState::SweepCollision(USkeletalMeshComponent* MeshComp, const FTransform& PreviousTransform,
-	const FTransform& CurrentTransform)
+void USP_AnimNotifyState::SweepCollision(USkeletalMeshComponent* MeshComp, const FTransform& PreviousTransform, const FTransform& CurrentTransform)
 {
 	if (!MeshComp) return;
 
 	AActor* OwnerActor = MeshComp->GetOwner();
 	UWorld* World = MeshComp->GetWorld();
-
 	if (!OwnerActor || !World) return;
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(SP_PredictedCollisionSweep), false, OwnerActor);
 	QueryParams.AddIgnoredActor(OwnerActor);
 
-	TArray<FHitResult> Hits;
+	const FVector PreviousLocation = PreviousTransform.GetLocation();
+	const FVector CurrentLocation = CurrentTransform.GetLocation();
+	const float SweepDistance = FVector::Dist(PreviousLocation, CurrentLocation);
+	const float SafeStepDistance = FMath::Max(MaxSweepStepDistance, 1.f);
+	const int32 NumSteps = FMath::Max(1, FMath::CeilToInt(SweepDistance / SafeStepDistance));
+	const FCollisionShape Shape = MakeCollisionShape();
 
-	World->SweepMultiByChannel(Hits, PreviousTransform.GetLocation(), CurrentTransform.GetLocation(),
-		CurrentTransform.GetRotation(), TraceChannel.GetValue(), MakeCollisionShape(), QueryParams);
-
-	if (bDrawDebug)
+	float DebugRadius = 25.f;
+	switch (CollisionShape)
 	{
-		const bool bHadHit = Hits.Num() > 0;
-		const FColor Color = bHadHit ? FColor::Green : FColor::Red;
-
-		DrawDebugLine(World, PreviousTransform.GetLocation(), CurrentTransform.GetLocation(), Color, false, 0.25f, 0, 2.f);
-
-		switch (CollisionShape)
-		{
-		case ESP_CollisionShape::Sphere:
-			DrawDebugSphere(World, CurrentTransform.GetLocation(), SphereRadius, 12, Color, false, 0.25f);
-			break;
-
-		case ESP_CollisionShape::Capsule:
-			DrawDebugCapsule(World, CurrentTransform.GetLocation(), CapsuleHalfHeight, CapsuleRadius, CurrentTransform.GetRotation(), Color, false, 0.25f);
-			break;
-
-		case ESP_CollisionShape::Box:
-		default:
-			DrawDebugBox(World, CurrentTransform.GetLocation(), BoxExtent, CurrentTransform.GetRotation(), Color, false, 0.25f);
-			break;
-		}
+	case ESP_CollisionShape::Sphere:
+		DebugRadius = FMath::Max(SphereRadius, 1.f);
+		break;
+	case ESP_CollisionShape::Capsule:
+		DebugRadius = FMath::Max(CapsuleRadius, 1.f);
+		break;
+	case ESP_CollisionShape::Box:
+	default:
+		DebugRadius = BoxExtent.GetMax();
+		break;
 	}
 
-	for (const FHitResult& Hit : Hits)
+	for (int32 StepIndex = 0; StepIndex < NumSteps; ++StepIndex)
 	{
-		AActor* HitActor = Hit.GetActor();
+		const float StartAlpha = static_cast<float>(StepIndex) / static_cast<float>(NumSteps);
+		const float EndAlpha = static_cast<float>(StepIndex + 1) / static_cast<float>(NumSteps);
+		const FVector StepStart = FMath::Lerp(PreviousLocation, CurrentLocation, StartAlpha);
+		const FVector StepEnd = FMath::Lerp(PreviousLocation, CurrentLocation, EndAlpha);
 
-		if (!HitActor || HitActor == OwnerActor) continue;
+		TArray<FHitResult> Hits;
+		const bool bHit = World->SweepMultiByChannel(Hits, StepStart, StepEnd, CurrentTransform.GetRotation(), TraceChannel.GetValue(), Shape, QueryParams);
 
-		UE_LOG(LogTemp, Warning, TEXT("SP Collision Hit Owner=%s HitActor=%s Location=%s"),
-			*GetNameSafe(OwnerActor),
-			*GetNameSafe(HitActor),
-			*Hit.ImpactPoint.ToString());
+		if (bDrawDebug)
+		{
+			const float DrawTime = 0.25f;
+			const FColor DebugColor = bHit ? FColor::Red : FColor::Green;
+			DrawDebugLine(World, StepStart, StepEnd, DebugColor, false, DrawTime, 0, 1.5f);
 
-		if (HasAlreadyProcessedTarget(MeshComp, HitActor)) continue;
+			switch (CollisionShape)
+			{
+			case ESP_CollisionShape::Sphere:
+				DrawDebugSphere(World, StepStart, FMath::Max(SphereRadius, 1.f), 16, DebugColor, false, DrawTime);
+				DrawDebugSphere(World, StepEnd, FMath::Max(SphereRadius, 1.f), 16, DebugColor, false, DrawTime);
+				break;
 
-		MarkTargetProcessed(MeshComp, HitActor);
+			case ESP_CollisionShape::Capsule:
+				DrawDebugCapsule(World, StepStart, FMath::Max(CapsuleHalfHeight, 1.f), FMath::Max(CapsuleRadius, 1.f), CurrentTransform.GetRotation(), DebugColor, false, DrawTime);
+				DrawDebugCapsule(World, StepEnd, FMath::Max(CapsuleHalfHeight, 1.f), FMath::Max(CapsuleRadius, 1.f), CurrentTransform.GetRotation(), DebugColor, false, DrawTime);
+				break;
 
-		TryPlayPredictedReaction(OwnerActor, HitActor);
-		TryApplyReactionEffects(OwnerActor, HitActor);
+			case ESP_CollisionShape::Box:
+			default:
+				DrawDebugBox(World, StepStart, BoxExtent.ComponentMax(FVector(1.f)), CurrentTransform.GetRotation(), DebugColor, false, DrawTime);
+				DrawDebugBox(World, StepEnd, BoxExtent.ComponentMax(FVector(1.f)), CurrentTransform.GetRotation(), DebugColor, false, DrawTime);
+				break;
+			}
+		}
+
+		for (const FHitResult& Hit : Hits)
+		{
+			AActor* HitActor = Hit.GetActor();
+			if (!HitActor || HitActor == OwnerActor) continue;
+			if (HasAlreadyProcessedTarget(MeshComp, HitActor)) continue;
+
+			MarkTargetProcessed(MeshComp, HitActor);
+
+			UE_LOG(LogTemp, Warning, TEXT("SP Collision Hit Owner=%s HitActor=%s Location=%s"),
+				*GetNameSafe(OwnerActor), *GetNameSafe(HitActor), *Hit.ImpactPoint.ToString());
+
+			TryPlayPredictedReaction(OwnerActor, HitActor);
+			TryApplyReactionEffects(OwnerActor, HitActor);
+		}
 	}
 }
 
