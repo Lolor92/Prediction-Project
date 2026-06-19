@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "Engine/EngineTypes.h"
+#include "Types/SP_PredictedReactionTypes.h"
 #include "SP_AnimNotifyState.generated.h"
 
 UENUM(BlueprintType)
@@ -60,6 +61,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Sync Prediction|Debug")
 	bool bDrawDebug = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SyncPrediction|Predicted Reaction")
+	bool bPlayPredictedReactionOnClient = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SyncPrediction|Predicted Reaction", meta=(EditCondition="bPlayPredictedReactionOnClient"))
+	FSP_PredictedReactionAnimation PredictedReaction;
 
 private:
 	UPROPERTY(Transient)
@@ -69,4 +76,6 @@ private:
 	bool BuildTraceTransform(USkeletalMeshComponent* MeshComp, FTransform& OutTransform) const;
 	FCollisionShape MakeCollisionShape() const;
 	void SweepCollision(USkeletalMeshComponent* MeshComp, const FTransform& PreviousTransform, const FTransform& CurrentTransform);
+	
+	void TryPlayPredictedReaction(AActor* AttackerActor, AActor* HitActor) const;
 };
