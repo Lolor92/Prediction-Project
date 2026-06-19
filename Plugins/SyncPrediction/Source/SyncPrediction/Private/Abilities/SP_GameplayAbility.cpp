@@ -2,6 +2,7 @@
 #include "Animation/AnimInstance.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/SP_PredictionComponent.h"
 #include "Engine/OverlapResult.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Character.h"
@@ -53,6 +54,18 @@ void USP_GameplayAbility::EndAbility(
 	StopRootMotionContactCheck();
 	RestoreRootMotionMode();
 	RestoreMovementInputFromContact();
+
+	if (ACharacter* Character = CachedCharacter.Get())
+	{
+		if (Character->HasAuthority() && bRootMotionStoppedByContact)
+		{
+			if (USP_PredictionComponent* PredictionComponent =
+				Character->FindComponentByClass<USP_PredictionComponent>())
+			{
+				PredictionComponent->MulticastRestoreRootMotionAfterContact();
+			}
+		}
+	}
 
 	Super::EndAbility(
 		Handle,
@@ -327,51 +340,12 @@ void USP_GameplayAbility::StopRootMotionFromContact(
 
 	if (Character->HasAuthority())
 	{
-		MulticastStopRootMotionFromContact(Character);
+		if (USP_PredictionComponent* PredictionComponent =
+			Character->FindComponentByClass<USP_PredictionComponent>())
+		{
+			PredictionComponent->MulticastStopRootMotionFromContact();
+		}
 	}
-}
-
-void USP_GameplayAbility::MulticastStopRootMotionFromContact_Implementation(AActor* AvatarActor)
-{
-	ACharacter* Character = Cast<ACharacter>(AvatarActor);
-	if (!Character)
-	{
-		return;
-	}
-
-	// Server already did it in StopRootMotionFromContact.
-	if (Character->HasAuthority())
-	{
-		return;
-	}
-
-	// Owning client already stopped immediately through local prediction.
-	if (Character->IsLocallyControlled())
-	{
-		return;
-	}
-
-	USkeletalMeshComponent* Mesh = Character->GetMesh();
-	UAnimInstance* AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
-
-	if (AnimInstance)
-	{
-		AnimInstance->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
-	}
-
-	if (UCharacterMovementComponent* MovementComponent = Character->GetCharacterMovement())
-	{
-		MovementComponent->StopMovementImmediately();
-		MovementComponent->Velocity = FVector::ZeroVector;
-	}
-
-	UE_LOG(LogTemp, Warning,
-		TEXT("SP Ability multicast stopped simulated root motion Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
-		*GetNameSafe(Character),
-		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
-		static_cast<int32>(Character->GetLocalRole()),
-		Character->IsLocallyControlled(),
-		Character->HasAuthority());
 }
 
 void USP_GameplayAbility::BlockMovementInputFromContact()

@@ -83,6 +83,12 @@ public:
 	void MulticastFinishConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* TargetActor,
 		FGameplayTag ReactionTag, FVector ServerFinalLocation);
 
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastStopRootMotionFromContact();
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastRestoreRootMotionAfterContact();
+
 	UFUNCTION(Client, Reliable)
 	void ClientPlayOwnerConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* ExpectedTargetActor,
 		AActor* InstigatorActor, FGameplayTag ReactionTag);

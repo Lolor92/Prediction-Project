@@ -819,6 +819,79 @@ void USP_PredictionComponent::MulticastFinishConfirmedReaction_Implementation(
 		ETeleportType::TeleportPhysics);
 }
 
+void USP_PredictionComponent::MulticastStopRootMotionFromContact_Implementation()
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character)
+	{
+		return;
+	}
+
+	// Server already stopped from the ability.
+	if (Character->HasAuthority())
+	{
+		return;
+	}
+
+	// Owning client already stopped from local prediction.
+	if (Character->IsLocallyControlled())
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* Mesh = Character->GetMesh();
+	UAnimInstance* AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
+
+	if (AnimInstance)
+	{
+		AnimInstance->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
+	}
+
+	if (UCharacterMovementComponent* MovementComponent = Character->GetCharacterMovement())
+	{
+		MovementComponent->StopMovementImmediately();
+		MovementComponent->Velocity = FVector::ZeroVector;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP PredictionComponent multicast stopped simulated root motion Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
+		*GetNameSafe(Character),
+		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
+		static_cast<int32>(Character->GetLocalRole()),
+		Character->IsLocallyControlled(),
+		Character->HasAuthority());
+}
+
+void USP_PredictionComponent::MulticastRestoreRootMotionAfterContact_Implementation()
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character)
+	{
+		return;
+	}
+
+	if (Character->HasAuthority() || Character->IsLocallyControlled())
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* Mesh = Character->GetMesh();
+	UAnimInstance* AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
+
+	if (AnimInstance)
+	{
+		AnimInstance->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP PredictionComponent multicast restored simulated root motion Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
+		*GetNameSafe(Character),
+		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
+		static_cast<int32>(Character->GetLocalRole()),
+		Character->IsLocallyControlled(),
+		Character->HasAuthority());
+}
+
 void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FSP_ReactionPredictionContext Context,
 	AActor* ExpectedTargetActor, AActor* InstigatorActor, FGameplayTag ReactionTag)
 {

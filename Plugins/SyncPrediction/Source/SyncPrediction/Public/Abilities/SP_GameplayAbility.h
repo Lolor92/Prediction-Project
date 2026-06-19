@@ -18,9 +18,6 @@ class SYNCPREDICTION_API USP_GameplayAbility : public UGameplayAbility
 public:
 	USP_GameplayAbility();
 
-	UFUNCTION(NetMulticast, Unreliable)
-	void MulticastStopRootMotionFromContact(AActor* AvatarActor);
-
 protected:
 	virtual void ActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
