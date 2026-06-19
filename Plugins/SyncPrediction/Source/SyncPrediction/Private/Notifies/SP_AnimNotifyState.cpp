@@ -13,6 +13,10 @@ void USP_AnimNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSeq
 
 	if (!MeshComp) return;
 
+	FSP_NotifyRuntimeWindow& Window = ActiveWindowsByMesh.FindOrAdd(MeshComp);
+	Window.WindowId = FGuid::NewGuid();
+	Window.ProcessedTargets.Reset();
+
 	AActor* OwnerActor = MeshComp->GetOwner();
 	if (!ShouldRunPredictedCollision(OwnerActor)) return;
 
@@ -48,6 +52,11 @@ void USP_AnimNotifyState::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSeque
 	const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
+
+	if (MeshComp)
+	{
+		ActiveWindowsByMesh.Remove(MeshComp);
+	}
 
 	if (MeshComp)
 	{
@@ -161,6 +170,10 @@ void USP_AnimNotifyState::SweepCollision(USkeletalMeshComponent* MeshComp, const
 			*GetNameSafe(HitActor),
 			*Hit.ImpactPoint.ToString());
 
+		if (HasAlreadyProcessedTarget(MeshComp, HitActor)) continue;
+
+		MarkTargetProcessed(MeshComp, HitActor);
+
 		TryPlayPredictedReaction(OwnerActor, HitActor);
 		TryApplyReactionEffects(OwnerActor, HitActor);
 	}
@@ -210,4 +223,27 @@ void USP_AnimNotifyState::TryApplyReactionEffects(AActor* AttackerActor, AActor*
 	if (!PredictionComponent) return;
 
 	PredictionComponent->ApplyReactionEffectsToTarget(HitActor, PredictedReactionTag);
+}
+
+bool USP_AnimNotifyState::HasAlreadyProcessedTarget(USkeletalMeshComponent* MeshComp, AActor* TargetActor) const
+{
+	if (!MeshComp || !TargetActor) return true;
+
+	const TWeakObjectPtr<USkeletalMeshComponent> MeshKey(MeshComp);
+	const FSP_NotifyRuntimeWindow* Window = ActiveWindowsByMesh.Find(MeshKey);
+	if (!Window) return false;
+
+	const TWeakObjectPtr<AActor> TargetKey(TargetActor);
+	return Window->ProcessedTargets.Contains(TargetKey);
+}
+
+void USP_AnimNotifyState::MarkTargetProcessed(USkeletalMeshComponent* MeshComp, AActor* TargetActor)
+{
+	if (!MeshComp || !TargetActor) return;
+
+	const TWeakObjectPtr<USkeletalMeshComponent> MeshKey(MeshComp);
+	FSP_NotifyRuntimeWindow& Window = ActiveWindowsByMesh.FindOrAdd(MeshKey);
+
+	const TWeakObjectPtr<AActor> TargetKey(TargetActor);
+	Window.ProcessedTargets.Add(TargetKey);
 }

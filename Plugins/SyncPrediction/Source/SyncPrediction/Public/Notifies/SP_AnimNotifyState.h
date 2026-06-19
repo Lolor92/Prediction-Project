@@ -7,6 +7,7 @@
 #include "SP_AnimNotifyState.generated.h"
 
 class USP_ReactionData;
+class AActor;
 
 UENUM(BlueprintType)
 enum class ESP_CollisionShape : uint8
@@ -14,6 +15,12 @@ enum class ESP_CollisionShape : uint8
 	Sphere,
 	Box,
 	Capsule
+};
+
+struct FSP_NotifyRuntimeWindow
+{
+	FGuid WindowId;
+	TSet<TWeakObjectPtr<AActor>> ProcessedTargets;
 };
 
 UCLASS()
@@ -81,4 +88,10 @@ private:
 
 	void TryPlayPredictedReaction(AActor* AttackerActor, AActor* HitActor) const;
 	void TryApplyReactionEffects(AActor* AttackerActor, AActor* HitActor) const;
+
+	TMap<TWeakObjectPtr<USkeletalMeshComponent>, FSP_NotifyRuntimeWindow> ActiveWindowsByMesh;
+
+	bool HasAlreadyProcessedTarget(USkeletalMeshComponent* MeshComp, AActor* TargetActor) const;
+
+	void MarkTargetProcessed(USkeletalMeshComponent* MeshComp, AActor* TargetActor);
 };
