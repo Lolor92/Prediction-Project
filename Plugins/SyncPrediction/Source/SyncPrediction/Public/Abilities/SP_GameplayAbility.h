@@ -45,6 +45,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.01", Units="Seconds"))
 	float RootMotionContactReleaseCheckInterval = 0.03f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.0", Units="Seconds"))
+	float RootMotionContactReleaseDelay = 0.1f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.0", Units="Centimeters"))
 	float RootMotionContactReleaseExtraTolerance = 2.f;
 
@@ -65,6 +68,7 @@ private:
 	TWeakObjectPtr<AActor> RootMotionContactBlockingActor;
 
 	FTimerHandle RootMotionContactReleaseTimerHandle;
+	FTimerHandle RootMotionContactReleaseDelayTimerHandle;
 
 	ERootMotionMode::Type PreviousRootMotionMode = ERootMotionMode::RootMotionFromMontagesOnly;
 
@@ -79,6 +83,8 @@ private:
 	void StartRootMotionContactReleaseCheck();
 	void StopRootMotionContactReleaseCheck();
 	void CheckRootMotionContactRelease();
+	void StartRootMotionContactReleaseDelay();
+	void CancelRootMotionContactReleaseDelay();
 
 	UFUNCTION()
 	void HandleCapsuleHit(

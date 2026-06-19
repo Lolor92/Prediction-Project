@@ -54,6 +54,7 @@ void USP_GameplayAbility::EndAbility(
 {
 	StopRootMotionContactCheck();
 	StopRootMotionContactReleaseCheck();
+	CancelRootMotionContactReleaseDelay();
 
 	if (bRootMotionStoppedByContact)
 	{
@@ -214,8 +215,69 @@ void USP_GameplayAbility::CheckRootMotionContactRelease()
 
 	if (!IsStillInRootMotionStopContact(Character, BlockingActor))
 	{
-		RestoreRootMotionFromContactRelease();
+		StartRootMotionContactReleaseDelay();
+		return;
 	}
+
+	CancelRootMotionContactReleaseDelay();
+}
+
+void USP_GameplayAbility::StartRootMotionContactReleaseDelay()
+{
+	ACharacter* Character = CachedCharacter.Get();
+	if (!Character)
+	{
+		return;
+	}
+
+	UWorld* World = Character->GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (World->GetTimerManager().IsTimerActive(RootMotionContactReleaseDelayTimerHandle))
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP Ability started root motion contact release delay Character=%s Delay=%.3f"),
+		*GetNameSafe(Character),
+		RootMotionContactReleaseDelay);
+
+	World->GetTimerManager().SetTimer(
+		RootMotionContactReleaseDelayTimerHandle,
+		this,
+		&USP_GameplayAbility::RestoreRootMotionFromContactRelease,
+		RootMotionContactReleaseDelay,
+		false);
+}
+
+void USP_GameplayAbility::CancelRootMotionContactReleaseDelay()
+{
+	ACharacter* Character = CachedCharacter.Get();
+	if (!Character)
+	{
+		return;
+	}
+
+	UWorld* World = Character->GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (!World->GetTimerManager().IsTimerActive(RootMotionContactReleaseDelayTimerHandle))
+	{
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(RootMotionContactReleaseDelayTimerHandle);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP Ability cancelled root motion contact release delay Character=%s"),
+		*GetNameSafe(Character));
 }
 
 void USP_GameplayAbility::HandleCapsuleHit(
@@ -312,10 +374,7 @@ bool USP_GameplayAbility::ShouldStopRootMotionForContact(
 	return false;
 }
 
-bool USP_GameplayAbility::IsValidRootMotionStopContact(
-	ACharacter* Character,
-	AActor* OtherActor,
-	float& OutContactAngle) const
+bool USP_GameplayAbility::IsValidRootMotionStopContact(ACharacter* Character, AActor* OtherActor, float& OutContactAngle) const
 {
 	OutContactAngle = 0.f;
 
@@ -526,12 +585,21 @@ void USP_GameplayAbility::RestoreMovementInputFromContact()
 void USP_GameplayAbility::RestoreRootMotionFromContactRelease()
 {
 	ACharacter* Character = CachedCharacter.Get();
+	AActor* BlockingActor = RootMotionContactBlockingActor.Get();
+
 	if (!Character)
 	{
 		return;
 	}
 
+	if (BlockingActor && IsStillInRootMotionStopContact(Character, BlockingActor))
+	{
+		CancelRootMotionContactReleaseDelay();
+		return;
+	}
+
 	StopRootMotionContactReleaseCheck();
+	CancelRootMotionContactReleaseDelay();
 
 	bRootMotionStoppedByContact = false;
 	RootMotionContactBlockingActor.Reset();
