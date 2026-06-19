@@ -62,8 +62,8 @@ public:
 		FGameplayTag ReactionTag, float ServerStartTime);
 
 	UFUNCTION(Client, Reliable)
-	void ClientPlayOwnerConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* InstigatorActor,
-		FGameplayTag ReactionTag);
+	void ClientPlayOwnerConfirmedReaction(FSP_ReactionPredictionContext Context, AActor* ExpectedTargetActor,
+		AActor* InstigatorActor, FGameplayTag ReactionTag);
 
 private:
 	bool CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction) const;

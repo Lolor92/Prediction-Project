@@ -487,7 +487,7 @@ void USP_PredictionComponent::ServerConfirmPredictedReaction_Implementation(FSP_
 	if (USP_PredictionComponent* TargetPredictionComponent =
 		TargetActor->FindComponentByClass<USP_PredictionComponent>())
 	{
-		TargetPredictionComponent->ClientPlayOwnerConfirmedReaction(Context, OwnerActor, ReactionTag);
+		TargetPredictionComponent->ClientPlayOwnerConfirmedReaction(Context, TargetActor, OwnerActor, ReactionTag);
 	}
 
 	const float ServerStartTime = GetServerWorldTimeSecondsSafe();
@@ -563,7 +563,7 @@ void USP_PredictionComponent::MulticastPlayConfirmedReaction_Implementation(FSP_
 }
 
 void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FSP_ReactionPredictionContext Context,
-	AActor* InstigatorActor, FGameplayTag ReactionTag)
+	AActor* ExpectedTargetActor, AActor* InstigatorActor, FGameplayTag ReactionTag)
 {
 	AActor* OwnerActor = GetOwner();
 
@@ -572,8 +572,53 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 		return;
 	}
 
+	APawn* OwnerPawn = Cast<APawn>(OwnerActor);
+	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP ClientOwnerReaction skipped non locally controlled owner Owner=%s Instigator=%s PredictionId=%d"),
+			*GetNameSafe(OwnerActor),
+			*GetNameSafe(InstigatorActor),
+			Context.PredictionId);
+
+		return;
+	}
+
+	if (OwnerActor == InstigatorActor)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("SP ClientOwnerReaction blocked because OwnerActor == InstigatorActor Owner=%s PredictionId=%d"),
+			*GetNameSafe(OwnerActor),
+			Context.PredictionId);
+
+		return;
+	}
+
+	if (OwnerActor != ExpectedTargetActor)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("SP ClientOwnerReaction WRONG OWNER ComponentOwner=%s ExpectedTarget=%s Instigator=%s PredictionId=%d"),
+			*GetNameSafe(OwnerActor),
+			*GetNameSafe(ExpectedTargetActor),
+			*GetNameSafe(InstigatorActor),
+			Context.PredictionId);
+
+		return;
+	}
+
 	if (!ReactionData || !ReactionTag.IsValid())
 	{
+		return;
+	}
+
+	if (ConsumePendingPredictedReaction(Context, OwnerActor, ReactionTag))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP Client owner confirmed reaction consumed predicted local replay Owner=%s Tag=%s PredictionId=%d"),
+			*GetNameSafe(OwnerActor),
+			*ReactionTag.ToString(),
+			Context.PredictionId);
+
 		return;
 	}
 
