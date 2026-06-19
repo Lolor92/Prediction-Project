@@ -4,6 +4,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "Animation/AnimTypes.h"
 #include "Engine/HitResult.h"
+#include "TimerManager.h"
 #include "SP_GameplayAbility.generated.h"
 
 class ACharacter;
@@ -41,6 +42,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.0", Units="Centimeters"))
 	float RootMotionContactCapsuleInflation = 4.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.01", Units="Seconds"))
+	float RootMotionContactReleaseCheckInterval = 0.03f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.0", Units="Centimeters"))
+	float RootMotionContactReleaseExtraTolerance = 2.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact"))
 	bool bClearVelocityWhenRootMotionStops = true;
 
@@ -54,6 +61,11 @@ private:
 	UPROPERTY()
 	TWeakObjectPtr<ACharacter> CachedCharacter;
 
+	UPROPERTY()
+	TWeakObjectPtr<AActor> RootMotionContactBlockingActor;
+
+	FTimerHandle RootMotionContactReleaseTimerHandle;
+
 	ERootMotionMode::Type PreviousRootMotionMode = ERootMotionMode::RootMotionFromMontagesOnly;
 
 	bool bRootMotionStoppedByContact = false;
@@ -64,6 +76,9 @@ private:
 	void StopRootMotionContactCheck();
 
 	void CheckInitialRootMotionContact();
+	void StartRootMotionContactReleaseCheck();
+	void StopRootMotionContactReleaseCheck();
+	void CheckRootMotionContactRelease();
 
 	UFUNCTION()
 	void HandleCapsuleHit(
@@ -74,9 +89,11 @@ private:
 		const FHitResult& Hit);
 
 	bool IsValidRootMotionStopContact(ACharacter* Character, AActor* OtherActor, float& OutContactAngle) const;
+	bool IsStillInRootMotionStopContact(ACharacter* Character, AActor* BlockingActor) const;
 	bool ShouldStopRootMotionForContact(ACharacter* Character, AActor*& OutBlockingActor, float& OutContactAngle) const;
 
 	void StopRootMotionFromContact(AActor* BlockingActor, float ContactAngle);
+	void RestoreRootMotionFromContactRelease();
 	void RestoreRootMotionMode();
 	void BlockMovementInputFromContact();
 	void RestoreMovementInputFromContact();

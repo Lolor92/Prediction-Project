@@ -32,6 +32,7 @@ void USP_GameplayAbility::ActivateAbility(
 	bRootMotionStoppedByContact = false;
 	bMovementInputBlockedByContact = false;
 	bContactEventBound = false;
+	RootMotionContactBlockingActor.Reset();
 
 	if (USkeletalMeshComponent* Mesh = Character->GetMesh())
 	{
@@ -52,17 +53,23 @@ void USP_GameplayAbility::EndAbility(
 	bool bWasCancelled)
 {
 	StopRootMotionContactCheck();
-	RestoreRootMotionMode();
-	RestoreMovementInputFromContact();
+	StopRootMotionContactReleaseCheck();
 
-	if (ACharacter* Character = CachedCharacter.Get())
+	if (bRootMotionStoppedByContact)
 	{
-		if (Character->HasAuthority() && bRootMotionStoppedByContact)
+		RestoreRootMotionMode();
+		RestoreMovementInputFromContact();
+		RootMotionContactBlockingActor.Reset();
+
+		if (ACharacter* Character = CachedCharacter.Get())
 		{
-			if (USP_PredictionComponent* PredictionComponent =
-				Character->FindComponentByClass<USP_PredictionComponent>())
+			if (Character->HasAuthority())
 			{
-				PredictionComponent->MulticastRestoreRootMotionAfterContact();
+				if (USP_PredictionComponent* PredictionComponent =
+					Character->FindComponentByClass<USP_PredictionComponent>())
+				{
+					PredictionComponent->MulticastRestoreRootMotionAfterContact();
+				}
 			}
 		}
 	}
@@ -152,6 +159,62 @@ void USP_GameplayAbility::CheckInitialRootMotionContact()
 	if (ShouldStopRootMotionForContact(Character, BlockingActor, ContactAngle))
 	{
 		StopRootMotionFromContact(BlockingActor, ContactAngle);
+	}
+}
+
+void USP_GameplayAbility::StartRootMotionContactReleaseCheck()
+{
+	ACharacter* Character = CachedCharacter.Get();
+	if (!Character)
+	{
+		return;
+	}
+
+	UWorld* World = Character->GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		RootMotionContactReleaseTimerHandle,
+		this,
+		&USP_GameplayAbility::CheckRootMotionContactRelease,
+		RootMotionContactReleaseCheckInterval,
+		true);
+}
+
+void USP_GameplayAbility::StopRootMotionContactReleaseCheck()
+{
+	if (ACharacter* Character = CachedCharacter.Get())
+	{
+		if (UWorld* World = Character->GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(RootMotionContactReleaseTimerHandle);
+		}
+	}
+}
+
+void USP_GameplayAbility::CheckRootMotionContactRelease()
+{
+	if (!bRootMotionStoppedByContact)
+	{
+		StopRootMotionContactReleaseCheck();
+		return;
+	}
+
+	ACharacter* Character = CachedCharacter.Get();
+	AActor* BlockingActor = RootMotionContactBlockingActor.Get();
+
+	if (!Character || !BlockingActor)
+	{
+		RestoreRootMotionFromContactRelease();
+		return;
+	}
+
+	if (!IsStillInRootMotionStopContact(Character, BlockingActor))
+	{
+		RestoreRootMotionFromContactRelease();
 	}
 }
 
@@ -295,6 +358,44 @@ bool USP_GameplayAbility::IsValidRootMotionStopContact(
 	return AngleDegrees <= RootMotionStopContactAngleDegrees;
 }
 
+bool USP_GameplayAbility::IsStillInRootMotionStopContact(
+	ACharacter* Character,
+	AActor* BlockingActor) const
+{
+	if (!Character || !BlockingActor)
+	{
+		return false;
+	}
+
+	UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
+	UCapsuleComponent* OtherCapsule = BlockingActor->FindComponentByClass<UCapsuleComponent>();
+
+	if (!Capsule || !OtherCapsule)
+	{
+		return false;
+	}
+
+	const FVector A = Character->GetActorLocation();
+	const FVector B = BlockingActor->GetActorLocation();
+
+	const FVector Delta2D(B.X - A.X, B.Y - A.Y, 0.f);
+	const float Distance2D = Delta2D.Size();
+
+	const float CombinedRadius =
+		Capsule->GetScaledCapsuleRadius() +
+		OtherCapsule->GetScaledCapsuleRadius() +
+		RootMotionContactCapsuleInflation +
+		RootMotionContactReleaseExtraTolerance;
+
+	if (Distance2D > CombinedRadius)
+	{
+		return false;
+	}
+
+	float ContactAngle = 0.f;
+	return IsValidRootMotionStopContact(Character, BlockingActor, ContactAngle);
+}
+
 void USP_GameplayAbility::StopRootMotionFromContact(
 	AActor* BlockingActor,
 	float ContactAngle)
@@ -327,6 +428,8 @@ void USP_GameplayAbility::StopRootMotionFromContact(
 	}
 
 	bRootMotionStoppedByContact = true;
+	RootMotionContactBlockingActor = BlockingActor;
+	StartRootMotionContactReleaseCheck();
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("SP Ability stopped root motion from contact Character=%s BlockingActor=%s Angle=%.2f NetMode=%d Role=%d Local=%d Auth=%d"),
@@ -418,6 +521,44 @@ void USP_GameplayAbility::RestoreMovementInputFromContact()
 		static_cast<int32>(Character->GetLocalRole()),
 		Character->IsLocallyControlled(),
 		Character->HasAuthority());
+}
+
+void USP_GameplayAbility::RestoreRootMotionFromContactRelease()
+{
+	ACharacter* Character = CachedCharacter.Get();
+	if (!Character)
+	{
+		return;
+	}
+
+	StopRootMotionContactReleaseCheck();
+
+	bRootMotionStoppedByContact = false;
+	RootMotionContactBlockingActor.Reset();
+
+	RestoreRootMotionMode();
+
+	if (bBlockMovementInputWhenRootMotionStops)
+	{
+		RestoreMovementInputFromContact();
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP Ability restored root motion after contact release Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
+		*GetNameSafe(Character),
+		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
+		static_cast<int32>(Character->GetLocalRole()),
+		Character->IsLocallyControlled(),
+		Character->HasAuthority());
+
+	if (Character->HasAuthority())
+	{
+		if (USP_PredictionComponent* PredictionComponent =
+			Character->FindComponentByClass<USP_PredictionComponent>())
+		{
+			PredictionComponent->MulticastRestoreRootMotionAfterContact();
+		}
+	}
 }
 
 void USP_GameplayAbility::RestoreRootMotionMode()
