@@ -40,7 +40,7 @@ public:
 	bool ApplyReactionEffectsToTarget(AActor* TargetActor, FGameplayTag ReactionTag);
 
 	void AddPendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag);
-	bool ConsumePendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag);
+	bool ConsumePendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag, float* OutAgeSeconds = nullptr);
 
 protected:
 	virtual void BeginPlay() override;
@@ -48,6 +48,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category="Sync Prediction|Reaction")
 	float PendingPredictedReactionTimeout = 1.0f;
+
+	UPROPERTY(EditAnywhere, Category="Sync Prediction|Reaction")
+	float ActivePredictedReactionTimeout = 3.0f;
 
 private:
 	bool CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction) const;
@@ -66,4 +69,6 @@ private:
 	void BindToOwnerAnimInstance();
 	UFUNCTION()
 	void HandleOwnerMontageStarted(UAnimMontage* Montage);
+
+	FGameplayTag FindReactionTagForMontage(const UAnimMontage* Montage) const;
 };

@@ -68,12 +68,61 @@ void USP_PredictionComponent::HandleOwnerMontageStarted(UAnimMontage* Montage)
 {
 	AActor* OwnerActor = GetOwner();
 
-	UE_LOG(LogTemp, Warning, TEXT("SP MontageStarted Owner=%s Montage=%s LocalRole=%d RemoteRole=%d HasAuthority=%d"),
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP MontageStarted Owner=%s Montage=%s LocalRole=%d RemoteRole=%d HasAuthority=%d"),
 		*GetNameSafe(OwnerActor),
 		*GetNameSafe(Montage),
 		OwnerActor ? static_cast<int32>(OwnerActor->GetLocalRole()) : -1,
 		OwnerActor ? static_cast<int32>(OwnerActor->GetRemoteRole()) : -1,
 		OwnerActor ? OwnerActor->HasAuthority() : false);
+
+	if (!OwnerActor || !Montage) return;
+
+	// Only fix cosmetic replay on simulated proxies.
+	// Server and owning client should keep normal authoritative behavior.
+	if (OwnerActor->GetLocalRole() != ROLE_SimulatedProxy) return;
+
+	const FGameplayTag ReactionTag = FindReactionTagForMontage(Montage);
+	if (!ReactionTag.IsValid()) return;
+
+	float PredictedReactionAge = 0.f;
+	if (!ConsumePendingPredictedReaction(OwnerActor, ReactionTag, &PredictedReactionAge)) return;
+
+	UAnimInstance* AnimInstance = BoundAnimInstance.Get();
+	if (!AnimInstance) return;
+
+	const float MontageLength = Montage->GetPlayLength();
+
+	if (MontageLength <= 0.f) return;
+
+	const float CorrectedMontagePosition = FMath::Clamp(PredictedReactionAge, 0.f,
+		FMath::Max(0.f, MontageLength - KINDA_SMALL_NUMBER));
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP Skipped predicted reaction replay Owner=%s Montage=%s Tag=%s Age=%.3f NewPosition=%.3f"),
+		*GetNameSafe(OwnerActor),
+		*GetNameSafe(Montage),
+		*ReactionTag.ToString(),
+		PredictedReactionAge,
+		CorrectedMontagePosition);
+}
+
+FGameplayTag USP_PredictionComponent::FindReactionTagForMontage(const UAnimMontage* Montage) const
+{
+	if (!Montage || !ReactionData)
+	{
+		return FGameplayTag();
+	}
+
+	for (const FSP_ReactionDataEntry& ReactionEntry : ReactionData->Reactions)
+	{
+		if (ReactionEntry.Montage == Montage)
+		{
+			return ReactionEntry.ReactionTag;
+		}
+	}
+
+	return FGameplayTag();
 }
 
 bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetActor, FGameplayTag ReactionTag)
@@ -261,32 +310,53 @@ void USP_PredictionComponent::AddPendingPredictedReaction(AActor* TargetActor, F
 		*GetNameSafe(TargetActor), *ReactionTag.ToString(), Now);
 }
 
-bool USP_PredictionComponent::ConsumePendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag)
+bool USP_PredictionComponent::ConsumePendingPredictedReaction(AActor* TargetActor, FGameplayTag ReactionTag, float* OutAgeSeconds)
 {
 	if (!TargetActor || !ReactionTag.IsValid()) return false;
 
-	UWorld* World = GetWorld();
-	const float Now = World ? World->GetTimeSeconds() : 0.f;
+	const UWorld* World = GetWorld();
+	if (!World) return false;
+
+	const float CurrentTime = World->GetTimeSeconds();
 
 	for (int32 Index = PendingPredictedReactions.Num() - 1; Index >= 0; --Index)
 	{
-		const FSP_PendingPredictedReaction& Entry = PendingPredictedReactions[Index];
+		const FSP_PendingPredictedReaction& PendingReaction = PendingPredictedReactions[Index];
 
-		if (!Entry.TargetActor.IsValid() || Now - Entry.TimeSeconds > PendingPredictedReactionTimeout)
+		const bool bExpired = (CurrentTime - PendingReaction.TimeSeconds) > PendingPredictedReactionTimeout;
+
+		const bool bInvalid =
+			!PendingReaction.TargetActor.IsValid() ||
+			!PendingReaction.ReactionTag.IsValid();
+
+		if (bExpired || bInvalid)
 		{
 			PendingPredictedReactions.RemoveAtSwap(Index);
 			continue;
 		}
 
-		if (Entry.TargetActor.Get() == TargetActor && Entry.ReactionTag == ReactionTag)
+		if (PendingReaction.TargetActor.Get() == TargetActor && PendingReaction.ReactionTag == ReactionTag)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("SP ConsumePendingPredictedReaction SUCCESS Target=%s Tag=%s Time=%.3f"),
-				*GetNameSafe(TargetActor), *ReactionTag.ToString(), Now);
+			if (OutAgeSeconds)
+			{
+				*OutAgeSeconds = CurrentTime - PendingReaction.TimeSeconds;
+			}
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("SP ConsumePendingPredictedReaction SUCCESS Target=%s Tag=%s Age=%.3f"),
+				*GetNameSafe(TargetActor),
+				*ReactionTag.ToString(),
+				CurrentTime - PendingReaction.TimeSeconds);
 
 			PendingPredictedReactions.RemoveAtSwap(Index);
 			return true;
 		}
 	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("SP ConsumePendingPredictedReaction FAILED Target=%s Tag=%s"),
+		*GetNameSafe(TargetActor),
+		*ReactionTag.ToString());
 
 	return false;
 }
