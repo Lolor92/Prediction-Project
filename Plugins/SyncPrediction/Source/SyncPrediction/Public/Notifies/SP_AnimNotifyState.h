@@ -80,4 +80,5 @@ private:
 	void SweepCollision(USkeletalMeshComponent* MeshComp, const FTransform& PreviousTransform, const FTransform& CurrentTransform);
 
 	void TryPlayPredictedReaction(AActor* AttackerActor, AActor* HitActor) const;
+	void TryApplyReactionEffects(AActor* AttackerActor, AActor* HitActor) const;
 };

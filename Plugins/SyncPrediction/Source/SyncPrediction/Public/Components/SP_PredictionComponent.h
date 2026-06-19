@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Data/SP_ReactionData.h"
+#include "GameplayEffectTypes.h"
 #include "SP_PredictionComponent.generated.h"
 
 class AActor;
@@ -17,6 +18,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "SyncPrediction|Reaction")
 	bool PlayPredictedReactionOnTargetProxy(AActor* TargetActor, FGameplayTag ReactionTag);
+
+	UFUNCTION(BlueprintCallable, Category = "SyncPrediction|Reaction")
+	bool ApplyReactionEffectsToTarget(AActor* TargetActor, FGameplayTag ReactionTag);
 
 private:
 	bool CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor, const FSP_ReactionDataEntry& Reaction) const;

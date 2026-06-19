@@ -2,6 +2,9 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "GameFramework/Character.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
+#include "GameplayEffect.h"
 
 USP_PredictionComponent::USP_PredictionComponent()
 {
@@ -64,8 +67,49 @@ bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetA
 	return true;
 }
 
+bool USP_PredictionComponent::ApplyReactionEffectsToTarget(AActor* TargetActor, FGameplayTag ReactionTag)
+{
+	if (!TargetActor || !ReactionData || !ReactionTag.IsValid()) return false;
+
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !OwnerActor->HasAuthority()) return false;
+
+	FSP_ReactionDataEntry Reaction;
+	if (!ReactionData->FindReaction(ReactionTag, Reaction)) return false;
+
+	if (Reaction.TargetEffects.IsEmpty()) return false;
+
+	UAbilitySystemComponent* SourceASC =
+		UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OwnerActor);
+
+	UAbilitySystemComponent* TargetASC =
+		UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
+
+	if (!SourceASC || !TargetASC) return false;
+
+	bool bAppliedAnyEffect = false;
+
+	for (const TSubclassOf<UGameplayEffect>& EffectClass : Reaction.TargetEffects)
+	{
+		if (!EffectClass) continue;
+
+		FGameplayEffectContextHandle ContextHandle = SourceASC->MakeEffectContext();
+		ContextHandle.AddSourceObject(this);
+
+		const FGameplayEffectSpecHandle SpecHandle =
+			SourceASC->MakeOutgoingSpec(EffectClass, 1.f, ContextHandle);
+
+		if (!SpecHandle.IsValid()) continue;
+
+		SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+		bAppliedAnyEffect = true;
+	}
+
+	return bAppliedAnyEffect;
+}
+
 bool USP_PredictionComponent::CanPlayPredictedReactionOnTargetProxy(AActor* TargetActor,
-	const FSP_ReactionDataEntry& Reaction) const
+                                                                    const FSP_ReactionDataEntry& Reaction) const
 {
 	if (!TargetActor || !Reaction.Montage)
 	{

@@ -162,6 +162,7 @@ void USP_AnimNotifyState::SweepCollision(USkeletalMeshComponent* MeshComp, const
 			*Hit.ImpactPoint.ToString());
 
 		TryPlayPredictedReaction(OwnerActor, HitActor);
+		TryApplyReactionEffects(OwnerActor, HitActor);
 	}
 }
 
@@ -192,4 +193,21 @@ void USP_AnimNotifyState::TryPlayPredictedReaction(AActor* AttackerActor, AActor
 	if (!PredictedReactionTag.IsValid()) return;
 
 	PredictionComponent->PlayPredictedReactionOnTargetProxy(HitActor, PredictedReactionTag);
+}
+
+void USP_AnimNotifyState::TryApplyReactionEffects(AActor* AttackerActor, AActor* HitActor) const
+{
+	if (!AttackerActor || !HitActor) return;
+
+	// Only server applies GameplayEffects.
+	if (!AttackerActor->HasAuthority()) return;
+
+	if (!PredictedReactionTag.IsValid()) return;
+
+	USP_PredictionComponent* PredictionComponent =
+		AttackerActor->FindComponentByClass<USP_PredictionComponent>();
+
+	if (!PredictionComponent) return;
+
+	PredictionComponent->ApplyReactionEffectsToTarget(HitActor, PredictedReactionTag);
 }
