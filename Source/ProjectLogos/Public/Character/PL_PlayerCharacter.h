@@ -14,7 +14,7 @@ class PROJECTLOGOS_API APL_PlayerCharacter : public APL_BaseCharacter
 	GENERATED_BODY()
 
 public:
-	APL_PlayerCharacter();
+	APL_PlayerCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	// Player-state ASC setup.
 	virtual void PossessedBy(AController* NewController) override;

@@ -14,7 +14,7 @@ class PROJECTLOGOS_API APL_BaseCharacter : public ACharacter, public IAbilitySys
 	GENERATED_BODY()
 
 public:
-	APL_BaseCharacter();
+	APL_BaseCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 	
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 	UAttributeSet* GetAttributeSet() const;

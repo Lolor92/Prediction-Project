@@ -1,12 +1,38 @@
 #include "Abilities/SP_GameplayAbility.h"
-#include "Animation/AnimInstance.h"
 #include "Components/CapsuleComponent.h"
-#include "Components/SkeletalMeshComponent.h"
 #include "Components/SP_PredictionComponent.h"
 #include "Engine/OverlapResult.h"
-#include "GameFramework/Controller.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Engine/Engine.h"
+#include "Movement/SP_CharacterMovementComponent.h"
+
+static int32 SP_GetAbilityWorldPIEInstanceId(const UWorld* World)
+{
+	if (!World)
+	{
+		return INDEX_NONE;
+	}
+
+	if (const UPackage* Package = World->GetPackage())
+	{
+		const int32 PIEInstance = Package->GetPIEInstanceID();
+		if (PIEInstance != INDEX_NONE)
+		{
+			return PIEInstance;
+		}
+	}
+
+	if (GEngine)
+	{
+		if (const FWorldContext* WorldContext = GEngine->GetWorldContextFromWorld(World))
+		{
+			return WorldContext->PIEInstance;
+		}
+	}
+
+	return INDEX_NONE;
+}
 
 USP_GameplayAbility::USP_GameplayAbility()
 {
@@ -30,17 +56,8 @@ void USP_GameplayAbility::ActivateAbility(
 
 	CachedCharacter = Character;
 	bRootMotionStoppedByContact = false;
-	bMovementInputBlockedByContact = false;
 	bContactEventBound = false;
 	RootMotionContactBlockingActor.Reset();
-
-	if (USkeletalMeshComponent* Mesh = Character->GetMesh())
-	{
-		if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
-		{
-			PreviousRootMotionMode = AnimInstance->RootMotionMode.GetValue();
-		}
-	}
 
 	StartRootMotionContactCheck();
 }
@@ -58,21 +75,7 @@ void USP_GameplayAbility::EndAbility(
 
 	if (bRootMotionStoppedByContact)
 	{
-		RestoreRootMotionMode();
-		RestoreMovementInputFromContact();
-		RootMotionContactBlockingActor.Reset();
-
-		if (ACharacter* Character = CachedCharacter.Get())
-		{
-			if (Character->HasAuthority())
-			{
-				if (USP_PredictionComponent* PredictionComponent =
-					Character->FindComponentByClass<USP_PredictionComponent>())
-				{
-					PredictionComponent->MulticastRestoreRootMotionAfterContact();
-				}
-			}
-		}
+		ReleaseRootMotionContactBlock(TEXT("AbilityEnd"));
 	}
 
 	Super::EndAbility(
@@ -465,36 +468,28 @@ void USP_GameplayAbility::StopRootMotionFromContact(
 		return;
 	}
 
-	if (USkeletalMeshComponent* Mesh = Character->GetMesh())
-	{
-		if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
-		{
-			AnimInstance->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
-		}
-	}
+	const FVector BlockedDirection =
+		(BlockingActor->GetActorLocation() - Character->GetActorLocation()).GetSafeNormal2D();
 
-	if (bClearVelocityWhenRootMotionStops)
+	if (USP_CharacterMovementComponent* SPCMC =
+		Cast<USP_CharacterMovementComponent>(Character->GetCharacterMovement()))
 	{
-		if (UCharacterMovementComponent* MovementComponent = Character->GetCharacterMovement())
-		{
-			MovementComponent->StopMovementImmediately();
-		}
-	}
-
-	if (bBlockMovementInputWhenRootMotionStops)
-	{
-		BlockMovementInputFromContact();
+		SPCMC->SetRootMotionContactBlock(true, BlockedDirection);
 	}
 
 	bRootMotionStoppedByContact = true;
 	RootMotionContactBlockingActor = BlockingActor;
 	StartRootMotionContactReleaseCheck();
 
+	const float CurrentTime = Character->GetWorld() ? Character->GetWorld()->GetTimeSeconds() : -1.f;
+
 	UE_LOG(LogTemp, Warning,
-		TEXT("SP Ability stopped root motion from contact Character=%s BlockingActor=%s Angle=%.2f NetMode=%d Role=%d Local=%d Auth=%d"),
+		TEXT("SP Ability stopped root motion from contact PIE=%d Character=%s BlockingActor=%s Angle=%.2f Time=%.3f NetMode=%d Role=%d Local=%d Auth=%d"),
+		SP_GetAbilityWorldPIEInstanceId(Character->GetWorld()),
 		*GetNameSafe(Character),
 		*GetNameSafe(BlockingActor),
 		ContactAngle,
+		CurrentTime,
 		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
 		static_cast<int32>(Character->GetLocalRole()),
 		Character->IsLocallyControlled(),
@@ -505,81 +500,52 @@ void USP_GameplayAbility::StopRootMotionFromContact(
 		if (USP_PredictionComponent* PredictionComponent =
 			Character->FindComponentByClass<USP_PredictionComponent>())
 		{
-			PredictionComponent->MulticastStopRootMotionFromContact();
+			PredictionComponent->MulticastStopRootMotionFromContact(BlockedDirection, 0.f);
 		}
 	}
 }
 
-void USP_GameplayAbility::BlockMovementInputFromContact()
+void USP_GameplayAbility::ReleaseRootMotionContactBlock(const TCHAR* Reason)
 {
-	if (bMovementInputBlockedByContact)
-	{
-		return;
-	}
-
 	ACharacter* Character = CachedCharacter.Get();
 	if (!Character)
 	{
 		return;
 	}
 
-	AController* Controller = Character->GetController();
-	if (!Controller)
+	const bool bWasRootMotionStoppedByContact = bRootMotionStoppedByContact;
+	float CurrentTime = -1.f;
+
+	if (UWorld* World = Character->GetWorld())
 	{
-		return;
+		CurrentTime = World->GetTimeSeconds();
 	}
 
-	Controller->SetIgnoreMoveInput(true);
-	bMovementInputBlockedByContact = true;
+	bRootMotionStoppedByContact = false;
+	RootMotionContactBlockingActor.Reset();
 
-	if (UCharacterMovementComponent* MovementComponent = Character->GetCharacterMovement())
-	{
-		MovementComponent->StopMovementImmediately();
-		MovementComponent->Velocity = FVector::ZeroVector;
-	}
+	ClearRootMotionContactBlock();
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("SP Ability blocked movement input from root motion contact Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
+		TEXT("SP Ability released root motion contact block PIE=%d Character=%s Reason=%s WasStopped=%d Time=%.3f NetMode=%d Role=%d Local=%d Auth=%d"),
+		SP_GetAbilityWorldPIEInstanceId(Character->GetWorld()),
 		*GetNameSafe(Character),
+		Reason ? Reason : TEXT("Unknown"),
+		bWasRootMotionStoppedByContact ? 1 : 0,
+		CurrentTime,
 		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
 		static_cast<int32>(Character->GetLocalRole()),
 		Character->IsLocallyControlled(),
 		Character->HasAuthority());
-}
 
-void USP_GameplayAbility::RestoreMovementInputFromContact()
-{
-	if (!bMovementInputBlockedByContact)
+	if (Character->HasAuthority() && bWasRootMotionStoppedByContact)
 	{
-		return;
+		if (USP_PredictionComponent* PredictionComponent =
+			Character->FindComponentByClass<USP_PredictionComponent>())
+		{
+			PredictionComponent->MulticastRestoreRootMotionAfterContact();
+		}
 	}
-
-	if (!bRestoreMovementInputWhenAbilityEnds)
-	{
-		return;
-	}
-
-	ACharacter* Character = CachedCharacter.Get();
-	if (!Character)
-	{
-		bMovementInputBlockedByContact = false;
-		return;
-	}
-
-	if (AController* Controller = Character->GetController())
-	{
-		Controller->SetIgnoreMoveInput(false);
-	}
-
-	bMovementInputBlockedByContact = false;
-
-	UE_LOG(LogTemp, Warning,
-		TEXT("SP Ability restored movement input after root motion contact Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
-		*GetNameSafe(Character),
-		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
-		static_cast<int32>(Character->GetLocalRole()),
-		Character->IsLocallyControlled(),
-		Character->HasAuthority());
 }
 
 void USP_GameplayAbility::RestoreRootMotionFromContactRelease()
@@ -601,35 +567,10 @@ void USP_GameplayAbility::RestoreRootMotionFromContactRelease()
 	StopRootMotionContactReleaseCheck();
 	CancelRootMotionContactReleaseDelay();
 
-	bRootMotionStoppedByContact = false;
-	RootMotionContactBlockingActor.Reset();
-
-	RestoreRootMotionMode();
-
-	if (bBlockMovementInputWhenRootMotionStops)
-	{
-		RestoreMovementInputFromContact();
-	}
-
-	UE_LOG(LogTemp, Warning,
-		TEXT("SP Ability restored root motion after contact release Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
-		*GetNameSafe(Character),
-		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
-		static_cast<int32>(Character->GetLocalRole()),
-		Character->IsLocallyControlled(),
-		Character->HasAuthority());
-
-	if (Character->HasAuthority())
-	{
-		if (USP_PredictionComponent* PredictionComponent =
-			Character->FindComponentByClass<USP_PredictionComponent>())
-		{
-			PredictionComponent->MulticastRestoreRootMotionAfterContact();
-		}
-	}
+	ReleaseRootMotionContactBlock(TEXT("ContactReleased"));
 }
 
-void USP_GameplayAbility::RestoreRootMotionMode()
+void USP_GameplayAbility::ClearRootMotionContactBlock()
 {
 	ACharacter* Character = CachedCharacter.Get();
 	if (!Character)
@@ -637,11 +578,9 @@ void USP_GameplayAbility::RestoreRootMotionMode()
 		return;
 	}
 
-	if (USkeletalMeshComponent* Mesh = Character->GetMesh())
+	if (USP_CharacterMovementComponent* SPCMC =
+		Cast<USP_CharacterMovementComponent>(Character->GetCharacterMovement()))
 	{
-		if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
-		{
-			AnimInstance->SetRootMotionMode(PreviousRootMotionMode);
-		}
+		SPCMC->ClearRootMotionContactBlock();
 	}
 }

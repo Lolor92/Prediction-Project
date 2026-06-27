@@ -84,7 +84,7 @@ public:
 		FGameplayTag ReactionTag, FVector ServerFinalLocation);
 
 	UFUNCTION(NetMulticast, Unreliable)
-	void MulticastStopRootMotionFromContact();
+	void MulticastStopRootMotionFromContact(FVector_NetQuantizeNormal BlockedDirection, float Duration);
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastRestoreRootMotionAfterContact();

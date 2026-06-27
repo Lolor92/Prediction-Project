@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
-#include "Animation/AnimTypes.h"
 #include "Engine/HitResult.h"
 #include "TimerManager.h"
 #include "SP_GameplayAbility.generated.h"
@@ -51,15 +50,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact", ClampMin="0.0", Units="Centimeters"))
 	float RootMotionContactReleaseExtraTolerance = 2.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact"))
-	bool bClearVelocityWhenRootMotionStops = true;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bStopRootMotionOnPawnContact"))
-	bool bBlockMovementInputWhenRootMotionStops = true;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="SyncPrediction|RootMotion Contact", meta=(EditCondition="bBlockMovementInputWhenRootMotionStops"))
-	bool bRestoreMovementInputWhenAbilityEnds = true;
-
 private:
 	UPROPERTY()
 	TWeakObjectPtr<ACharacter> CachedCharacter;
@@ -69,11 +59,7 @@ private:
 
 	FTimerHandle RootMotionContactReleaseTimerHandle;
 	FTimerHandle RootMotionContactReleaseDelayTimerHandle;
-
-	ERootMotionMode::Type PreviousRootMotionMode = ERootMotionMode::RootMotionFromMontagesOnly;
-
 	bool bRootMotionStoppedByContact = false;
-	bool bMovementInputBlockedByContact = false;
 	bool bContactEventBound = false;
 
 	void StartRootMotionContactCheck();
@@ -100,7 +86,6 @@ private:
 
 	void StopRootMotionFromContact(AActor* BlockingActor, float ContactAngle);
 	void RestoreRootMotionFromContactRelease();
-	void RestoreRootMotionMode();
-	void BlockMovementInputFromContact();
-	void RestoreMovementInputFromContact();
+	void ReleaseRootMotionContactBlock(const TCHAR* Reason);
+	void ClearRootMotionContactBlock();
 };

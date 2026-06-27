@@ -9,11 +9,13 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/Pawn.h"
+#include "Engine/Engine.h"
+#include "Movement/SP_CharacterMovementComponent.h"
 #include "TimerManager.h"
 
 static FString SP_GetNetDebugPrefix(const UObject* WorldContextObject, const AActor* Actor)
 {
-	const UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+	UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
 
 	const TCHAR* NetModeString = TEXT("NoWorld");
 	if (World)
@@ -38,10 +40,28 @@ static FString SP_GetNetDebugPrefix(const UObject* WorldContextObject, const AAc
 		}
 	}
 
+	int32 PIEInstance = INDEX_NONE;
+	if (World)
+	{
+		if (const UPackage* Package = World->GetPackage())
+		{
+			PIEInstance = Package->GetPIEInstanceID();
+		}
+
+		if (PIEInstance == INDEX_NONE && GEngine)
+		{
+			if (const FWorldContext* WorldContext = GEngine->GetWorldContextFromWorld(World))
+			{
+				PIEInstance = WorldContext->PIEInstance;
+			}
+		}
+	}
+
 	const APawn* Pawn = Cast<APawn>(Actor);
 
 	return FString::Printf(
-		TEXT("[World=%s NetMode=%s Actor=%s Role=%d RemoteRole=%d Local=%d Auth=%d]"),
+		TEXT("[PIE=%d World=%s NetMode=%s Actor=%s Role=%d RemoteRole=%d Local=%d Auth=%d]"),
+		PIEInstance,
 		World ? *World->GetName() : TEXT("None"),
 		NetModeString,
 		*GetNameSafe(Actor),
@@ -82,7 +102,7 @@ bool USP_PredictionComponent::PlayPredictedReactionOnTargetProxy(AActor* TargetA
 	const float StartPosition = GetReactionStartPosition(Reaction);
 
 	const bool bPlayed = PlayReactionMontageOnActor(TargetActor, Reaction, StartPosition,
-		true);
+		false);
 
 	if (!bPlayed)
 	{
@@ -492,7 +512,7 @@ bool USP_PredictionComponent::PlayReactionMontageOnActor(AActor* TargetActor, co
 	if (!bForceRestart && AnimInstance->Montage_IsPlaying(Reaction.Montage))
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("SP Confirmed reaction already playing, not restarting Target=%s Montage=%s"),
+			TEXT("SP Reaction montage already playing, not restarting Target=%s Montage=%s"),
 			*GetNameSafe(TargetActor),
 			*GetNameSafe(Reaction.Montage));
 
@@ -617,7 +637,7 @@ void USP_PredictionComponent::ServerConfirmPredictedReaction_Implementation(FSP_
 	const float StartPosition = GetReactionStartPosition(Reaction);
 
 	const bool bPlayedOnServer = PlayReactionMontageOnActor(TargetActor, Reaction, StartPosition,
-		true);
+		false);
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("SP ServerConfirmPredictedReaction Owner=%s Target=%s Tag=%s Montage=%s PlayedOnServer=%d PredictionId=%d"),
@@ -809,87 +829,77 @@ void USP_PredictionComponent::MulticastFinishConfirmedReaction_Implementation(
 		return;
 	}
 
-	// First test: only correct at the end, not mid-animation.
-	// Small errors snap cleanly. Bigger errors use SetActorLocation too for now,
-	// because we first need to prove the timing idea works.
+	if (Distance > MaxInstantFinalCorrectionDistance)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP FinalCorrection skipped large snap Target=%s Distance=%.2f MaxInstant=%.2f PredictionId=%d"),
+			*GetNameSafe(TargetActor),
+			Distance,
+			MaxInstantFinalCorrectionDistance,
+			Context.PredictionId);
+
+		return;
+	}
+
 	TargetActor->SetActorLocation(
 		ServerFinalLocation,
 		false,
 		nullptr,
 		ETeleportType::TeleportPhysics);
-}
-
-void USP_PredictionComponent::MulticastStopRootMotionFromContact_Implementation()
-{
-	ACharacter* Character = Cast<ACharacter>(GetOwner());
-	if (!Character)
-	{
-		return;
-	}
-
-	// Server already stopped from the ability.
-	if (Character->HasAuthority())
-	{
-		return;
-	}
-
-	// Owning client already stopped from local prediction.
-	if (Character->IsLocallyControlled())
-	{
-		return;
-	}
-
-	USkeletalMeshComponent* Mesh = Character->GetMesh();
-	UAnimInstance* AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
-
-	if (AnimInstance)
-	{
-		AnimInstance->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
-	}
-
-	if (UCharacterMovementComponent* MovementComponent = Character->GetCharacterMovement())
-	{
-		MovementComponent->StopMovementImmediately();
-		MovementComponent->Velocity = FVector::ZeroVector;
-	}
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("SP PredictionComponent multicast stopped simulated root motion Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
-		*GetNameSafe(Character),
-		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
-		static_cast<int32>(Character->GetLocalRole()),
-		Character->IsLocallyControlled(),
-		Character->HasAuthority());
+		TEXT("SP FinalCorrection applied small snap Target=%s Distance=%.2f PredictionId=%d"),
+		*GetNameSafe(TargetActor),
+		Distance,
+		Context.PredictionId);
+}
+
+void USP_PredictionComponent::MulticastStopRootMotionFromContact_Implementation(
+	FVector_NetQuantizeNormal BlockedDirection,
+	float Duration)
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character || Character->HasAuthority() || Character->IsLocallyControlled())
+	{
+		return;
+	}
+
+	if (USP_CharacterMovementComponent* SPCMC =
+		Cast<USP_CharacterMovementComponent>(Character->GetCharacterMovement()))
+	{
+		SPCMC->SetRootMotionContactBlock(true, FVector(BlockedDirection), Duration);
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP CMC multicast blocked simulated root motion Character=%s Direction=%s Duration=%.3f Role=%d Local=%d Auth=%d"),
+			*GetNameSafe(Character),
+			*FVector(BlockedDirection).ToString(),
+			Duration,
+			static_cast<int32>(Character->GetLocalRole()),
+			Character->IsLocallyControlled(),
+			Character->HasAuthority());
+	}
 }
 
 void USP_PredictionComponent::MulticastRestoreRootMotionAfterContact_Implementation()
 {
 	ACharacter* Character = Cast<ACharacter>(GetOwner());
-	if (!Character)
+	if (!Character || Character->HasAuthority() || Character->IsLocallyControlled())
 	{
 		return;
 	}
 
-	if (Character->HasAuthority() || Character->IsLocallyControlled())
+	if (USP_CharacterMovementComponent* SPCMC =
+		Cast<USP_CharacterMovementComponent>(Character->GetCharacterMovement()))
 	{
-		return;
+		SPCMC->ClearRootMotionContactBlock();
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("SP CMC multicast restored simulated root motion Character=%s Role=%d Local=%d Auth=%d"),
+			*GetNameSafe(Character),
+			static_cast<int32>(Character->GetLocalRole()),
+			Character->IsLocallyControlled(),
+			Character->HasAuthority());
 	}
-
-	USkeletalMeshComponent* Mesh = Character->GetMesh();
-	UAnimInstance* AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
-
-	if (AnimInstance)
-	{
-		AnimInstance->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
-	}
-
-	UE_LOG(LogTemp, Warning,
-		TEXT("SP PredictionComponent multicast restored simulated root motion Character=%s NetMode=%d Role=%d Local=%d Auth=%d"),
-		*GetNameSafe(Character),
-		Character->GetWorld() ? static_cast<int32>(Character->GetWorld()->GetNetMode()) : -1,
-		static_cast<int32>(Character->GetLocalRole()),
-		Character->IsLocallyControlled(),
-		Character->HasAuthority());
 }
 
 void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FSP_ReactionPredictionContext Context,
@@ -969,7 +979,7 @@ void USP_PredictionComponent::ClientPlayOwnerConfirmedReaction_Implementation(FS
 	const float StartPosition = GetReactionStartPosition(Reaction);
 
 	const bool bPlayed = PlayReactionMontageOnActor(OwnerActor, Reaction, StartPosition,
-		true);
+		false);
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("SP ClientOwnerReaction PLAYED %s ExpectedTarget=%s Instigator=%s Tag=%s Played=%d PredictionId=%d"),

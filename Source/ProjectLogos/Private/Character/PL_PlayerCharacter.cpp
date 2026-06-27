@@ -6,7 +6,8 @@
 #include "Player/PL_PlayerState.h"
 
 
-APL_PlayerCharacter::APL_PlayerCharacter()
+APL_PlayerCharacter::APL_PlayerCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>("Spring Arm");
 	SpringArm->SetupAttachment(GetRootComponent());
